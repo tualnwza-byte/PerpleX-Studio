@@ -149,8 +149,8 @@ def main() -> None:
             self.phase_exclusions.setMinimumHeight(160)
             self.phase_exclusions.setMaximumHeight(260)
             self.phase_exclusion_help = QLabel(
-                "Select components above to show compatible database phases. "
-                "Only checked phases will be written to the Perple_X exclusion list."
+                "Check one or more phases to exclude them. Selecting a phase automatically "
+                "enables exclusion for the generated Perple_X project."
             )
             self.phase_exclusion_help.setWordWrap(True)
             self.solution_models = QCheckBox("Include solution models")
@@ -159,6 +159,11 @@ def main() -> None:
             self.save_button.clicked.connect(self._save_setup)
             self.create_dat_button = QPushButton("Create .dat Project")
             self.create_dat_button.clicked.connect(self._create_dat)
+            self.restore_defaults_button = QPushButton("Restore Defaults")
+            self.restore_defaults_button.setToolTip(
+                "Reset Build Input settings to Studio defaults. The Perple_X installation and database stay selected."
+            )
+            self.restore_defaults_button.clicked.connect(self._restore_defaults)
 
             root = QVBoxLayout(self)
             header = QLabel(
@@ -235,14 +240,15 @@ def main() -> None:
             actions = QHBoxLayout()
             actions.addWidget(self.create_dat_button)
             actions.addWidget(self.save_button)
+            actions.addWidget(self.restore_defaults_button)
             actions.addStretch()
             root.addLayout(actions)
             root.addStretch()
 
             self.saturated_fluid.toggled.connect(self._set_fluid_enabled)
-            self.exclude_phases.toggled.connect(self._set_phase_exclusions_enabled)
             self.database_menu.currentIndexChanged.connect(lambda _index: self._load_database())
             self.components.itemChanged.connect(lambda _item: self._sync_component_amounts())
+            self.phase_exclusions.itemChanged.connect(self._phase_exclusion_changed)
             self.saturated_components.itemChanged.connect(
                 lambda _item: self._sync_phase_exclusions(self._checked(self.components))
             )
@@ -255,7 +261,6 @@ def main() -> None:
             self.component_mode.currentIndexChanged.connect(lambda _index: self._set_mode_widgets())
             self.installation_edit.editingFinished.connect(self.refresh_files)
             self._set_fluid_enabled(False)
-            self._set_phase_exclusions_enabled(False)
             self._set_mode_widgets()
 
         @staticmethod
@@ -355,8 +360,10 @@ def main() -> None:
                 # With no components selected, expose the full database list.
                 # Once the user selects components, narrow it to compatible phases.
                 if not available or set(phase.components).issubset(available):
+                    category = "derived" if phase.derived else "phase"
+                    component_text = " + ".join(phase.components) or "components unresolved"
                     item = QListWidgetItem(
-                        f"{phase.name}  —  {' + '.join(phase.components)}"
+                        f"{phase.name}  —  {component_text}  ({category})"
                     )
                     item.setData(Qt.ItemDataRole.UserRole, phase.name)
                     item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -365,9 +372,9 @@ def main() -> None:
                     )
                     self.phase_exclusions.addItem(item)
 
-        def _set_phase_exclusions_enabled(self, enabled: bool) -> None:
-            self.phase_exclusions.setEnabled(enabled)
-            self.phase_exclusion_help.setEnabled(enabled)
+        def _phase_exclusion_changed(self, item: QListWidgetItem) -> None:
+            if item.checkState() == Qt.CheckState.Checked:
+                self.exclude_phases.setChecked(True)
 
         def _set_fluid_enabled(self, enabled: bool) -> None:
             for control in (
@@ -393,6 +400,49 @@ def main() -> None:
             )
             if directory:
                 self.project_directory.setText(directory)
+
+        def _restore_defaults(self) -> None:
+            """Return editable BUILD fields to safe Studio starting values."""
+            answer = QMessageBox.question(
+                self,
+                "Restore BUILD defaults?",
+                "Reset the current Build Input settings? The Perple_X installation and selected database will remain available.",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self.project_name.setText("my_project")
+            self.project_directory.setText(str(Path.cwd()))
+            self.transform.setChecked(False)
+            self.component_mode.setCurrentIndex(1)
+            self.saturated_fluid.setChecked(False)
+            self.h2o.setChecked(False)
+            self.co2.setChecked(False)
+            self.saturated_component_constraint.setChecked(False)
+            self.independent_potentials.setChecked(False)
+            self.fluid_eos.setCurrentIndex(0)
+            self.geothermal_gradient.setChecked(False)
+            self.diagram_type.setCurrentIndex(2)
+            self.print_file.setChecked(False)
+            self.exclude_phases.setChecked(False)
+            self.solution_models.setChecked(False)
+            self.title.clear()
+            option_index = self.option_menu.findText("perplex_option.dat")
+            if option_index >= 0:
+                self.option_menu.setCurrentIndex(option_index)
+            for widget in (self.components, self.saturated_components, self.phase_exclusions):
+                for index in range(widget.count()):
+                    widget.item(index).setCheckState(Qt.CheckState.Unchecked)
+            self._component_amounts.clear()
+            self._sync_component_amounts()
+            self.x_minimum.setValue(0.0)
+            self.x_maximum.setValue(0.0)
+            self.y_minimum.setValue(0.0)
+            self.y_maximum.setValue(0.0)
+            self.section_value.setValue(0.0)
+            if self.x_variable.findText("T(K)") >= 0:
+                self.x_variable.setCurrentText("T(K)")
+            if self.y_variable.findText("P(bar)") >= 0:
+                self.y_variable.setCurrentText("P(bar)")
 
         def _collect_setup(self) -> BuildSetup | None:
             if self.database_menu.currentData() is None or self.option_menu.currentData() is None:
@@ -494,58 +544,81 @@ def main() -> None:
         def __init__(self) -> None:
             super().__init__()
             self.setWindowTitle("PerpleX Studio")
-            self.resize(920, 640)
+            self.resize(1080, 720)
             self.setStyleSheet(
                 """
-                QMainWindow { background: #ffffff; color: #2e1065; }
-                QWidget { background: #ffffff; color: #2e1065; font-size: 13px; }
+                QMainWindow { background: #ffffff; color: #1f1b2d; }
+                QWidget {
+                    background: #ffffff; color: #1f1b2d; font-family: "Segoe UI";
+                    font-size: 13px;
+                }
+                QLabel { color: #45405a; }
                 QTabWidget::pane {
-                    background: #faf5ff; border: 1px solid #c4b5fd; border-radius: 6px;
+                    background: #ffffff; border: 1px solid #ddd6fe; border-radius: 10px;
+                    top: -1px;
                 }
                 QTabBar::tab {
-                    background: #ede9fe; border: 1px solid #c4b5fd; border-bottom: none;
-                    color: #4c1d95; padding: 8px 16px; margin-right: 3px; font-weight: 600;
+                    background: #f5f3ff; border: 1px solid #ddd6fe; border-bottom: none;
+                    border-top-left-radius: 8px; border-top-right-radius: 8px;
+                    color: #5b5680; padding: 9px 18px; margin-right: 4px; font-weight: 600;
                 }
-                QTabBar::tab:selected { background: #ffffff; color: #6d28d9; }
+                QTabBar::tab:hover { background: #ede9fe; color: #5b21b6; }
+                QTabBar::tab:selected {
+                    background: #ffffff; color: #5b21b6; border-color: #a78bfa;
+                }
                 QGroupBox {
-                    background: #ffffff; border: 1px solid #c4b5fd; border-radius: 7px;
-                    margin-top: 14px; padding: 14px 10px 10px 10px; font-weight: 700;
-                    color: #2e1065;
+                    background: #ffffff; border: 1px solid #ddd6fe; border-radius: 10px;
+                    margin-top: 16px; padding: 16px 14px 14px 14px; font-weight: 700;
+                    color: #3b1b75;
                 }
                 QGroupBox::title {
-                    subcontrol-origin: margin; left: 12px; padding: 0 6px;
-                    color: #6d28d9; background: #ffffff;
+                    subcontrol-origin: margin; left: 14px; padding: 0 7px;
+                    color: #5b21b6; background: #ffffff; font-size: 14px;
                 }
-                QLineEdit, QComboBox, QDoubleSpinBox, QListWidget, QPlainTextEdit {
-                    background: #ffffff; border: 1px solid #a78bfa; border-radius: 4px;
-                    color: #2e1065; min-height: 26px; padding: 2px 6px;
+                QLineEdit, QComboBox, QDoubleSpinBox, QListWidget, QPlainTextEdit, QTableWidget {
+                    background: #ffffff; border: 1px solid #c4b5fd; border-radius: 6px;
+                    color: #27213d; min-height: 28px; padding: 3px 8px;
                 }
-                QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QListWidget:focus {
-                    border: 2px solid #7c3aed; background: #faf5ff;
+                QLineEdit:hover, QComboBox:hover, QDoubleSpinBox:hover, QListWidget:hover, QTableWidget:hover {
+                    border-color: #a78bfa;
                 }
-                QComboBox::drop-down { border-left: 1px solid #c4b5fd; width: 24px; }
-                QComboBox QAbstractItemView { background: #ffffff; border: 1px solid #a78bfa; }
-                QListWidget::item { padding: 4px; }
-                QListWidget::item:selected { background: #ede9fe; color: #2e1065; }
+                QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QListWidget:focus, QTableWidget:focus {
+                    border: 2px solid #7c3aed; background: #fdfcff;
+                }
+                QComboBox::drop-down { border-left: 1px solid #ddd6fe; width: 28px; }
+                QComboBox QAbstractItemView { background: #ffffff; border: 1px solid #c4b5fd; }
+                QListWidget::item { padding: 6px; border-radius: 4px; }
+                QListWidget::item:hover { background: #f5f3ff; }
+                QListWidget::item:selected { background: #ede9fe; color: #3b1b75; }
+                QHeaderView::section {
+                    background: #f5f3ff; color: #5b21b6; border: none;
+                    border-bottom: 1px solid #ddd6fe; padding: 7px; font-weight: 700;
+                }
                 QCheckBox {
-                    background: #faf5ff; border: 1px solid #c4b5fd; border-radius: 4px;
-                    spacing: 7px; padding: 5px 8px;
+                    background: #fbfaff; border: 1px solid #ddd6fe; border-radius: 6px;
+                    spacing: 8px; padding: 6px 9px;
                 }
-                QCheckBox:hover { background: #f3e8ff; border-color: #7c3aed; }
-                QCheckBox:checked { background: #ede9fe; border-color: #6d28d9; font-weight: 600; }
-                QCheckBox::indicator { width: 17px; height: 17px; border: 1px solid #7e22ce; background: #ffffff; }
-                QCheckBox::indicator:checked { background: #6d28d9; border-color: #581c87; }
-                QListWidget::indicator { width: 16px; height: 16px; border: 1px solid #7e22ce; background: #ffffff; }
-                QListWidget::indicator:checked { background: #6d28d9; border-color: #581c87; }
+                QCheckBox:hover { background: #f5f3ff; border-color: #a78bfa; }
+                QCheckBox:checked { background: #f0edff; border-color: #7c3aed; font-weight: 600; }
+                QCheckBox::indicator { width: 17px; height: 17px; border: 1px solid #8b7ab8; background: #ffffff; }
+                QCheckBox::indicator:checked { background: #6d28d9; border-color: #5b21b6; }
+                QListWidget::indicator { width: 16px; height: 16px; border: 1px solid #8b7ab8; background: #ffffff; }
+                QListWidget::indicator:checked { background: #6d28d9; border-color: #5b21b6; }
                 QPushButton {
-                    background: #6d28d9; color: #ffffff; border: 1px solid #581c87;
-                    border-radius: 4px; padding: 7px 12px; font-weight: 700;
+                    background: #6d28d9; color: #ffffff; border: 1px solid #5b21b6;
+                    border-radius: 6px; padding: 8px 14px; font-weight: 700; min-height: 20px;
                 }
-                QPushButton:hover { background: #5b21b6; }
+                QPushButton:hover { background: #5b21b6; border-color: #4c1d95; }
                 QPushButton:pressed { background: #4c1d95; }
-                QPushButton:disabled { background: #ddd6fe; color: #6b21a8; border-color: #c4b5fd; }
+                QPushButton:disabled { background: #ede9fe; color: #8b7ab8; border-color: #ddd6fe; }
                 QScrollArea, QScrollArea::viewport { background: #ffffff; border: none; }
-                QStatusBar { background: #2e1065; color: #ffffff; }
+                QScrollBar:vertical { background: #f5f3ff; width: 11px; margin: 2px; border-radius: 5px; }
+                QScrollBar::handle:vertical { background: #c4b5fd; min-height: 32px; border-radius: 5px; }
+                QScrollBar::handle:vertical:hover { background: #a78bfa; }
+                QScrollBar:horizontal { background: #f5f3ff; height: 11px; margin: 2px; border-radius: 5px; }
+                QScrollBar::handle:horizontal { background: #c4b5fd; min-width: 32px; border-radius: 5px; }
+                QScrollBar::handle:horizontal:hover { background: #a78bfa; }
+                QStatusBar { background: #2e1065; color: #ffffff; font-weight: 500; }
                 """
             )
             self._settings = QSettings("PerpleX Studio", "PerpleX Studio")

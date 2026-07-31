@@ -1,24 +1,81 @@
 # PerpleX Studio
 
-PerpleX Studio is a desktop application that makes the Perple_X equilibrium-modelling workflow easier to set up, run, inspect, and reproduce. It will orchestrate the existing Perple_X executables; it will not reimplement their thermodynamic calculations.
+> **Experimental software - not yet validated for research use.**
+> PerpleX Studio is an early-stage graphical interface for Perple_X. Always
+> verify generated input files, console output, databases, solution models, and
+> scientific interpretations independently before using any result in research,
+> teaching, or publication.
 
-## Current status
+![Status: experimental](https://img.shields.io/badge/status-experimental-7c3aed)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows-2563eb)
+![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776ab)
+![License: MIT](https://img.shields.io/badge/license-MIT-16a34a)
 
-The project is at its foundation stage. The first usable milestone is deliberately small: select a Perple_X installation and a BUILD input file, run BUILD, and view its live output.
+PerpleX Studio makes the Perple_X equilibrium-modelling workflow easier to set
+up, run, inspect, and reproduce. It orchestrates the existing Perple_X
+executables; it does **not** reimplement or distribute the Perple_X
+thermodynamic engine, databases, or solution-model files.
 
-## Planned workflow
+## Quick start
+
+1. Install Python 3.12+, Perple_X for Windows, and 64-bit Ghostscript.
+2. Download this repository, then run:
+
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\Activate.ps1
+   pip install -e .
+   perplex-studio
+   ```
+
+3. In Studio, select the Perple_X installation root, create a `.dat` project,
+   and run the supported calculation route.
+
+For complete instructions, including troubleshooting, see the
+[Windows installation guide](docs/installation.md).
+
+## Current capabilities
+
+| Area | Current support |
+| --- | --- |
+| BUILD input | Guided project name, database, option-file, components, bulk amounts, P-T axes, phase exclusion, and title entry |
+| Convex-Hull projects | `CONVEX -> PSVDRAW -> PNG` |
+| 2D constrained minimisation | `VERTEX -> PSSECT -> PNG` |
+| Figure handling | Console log, zoomable PNG preview, and Save As |
+| Phase exclusion | Database-aware raw and derived/endmember checklist |
+| Installation safety | Runs are staged outside the original Perple_X installation |
+
+## Current limits
+
+Only the two calculation routes above are automated. The following controls are
+visible for planning but are **not implemented** in generated projects yet:
+
+- Component transformations
+- Independent chemical potentials, activities, or fugacities
+- Solution-model selection and editing
+- Remaining BUILD calculation modes
+- WERAMI data extraction and isopleth workflows
+
+The application reports unsupported settings instead of silently creating
+invalid Perple_X input.
+
+## Intended workflow
 
 ```text
-Project settings -> BUILD -> CONVEX or VERTEX -> WERAMI -> results and figures
+Project settings -> BUILD project (.dat) -> CONVEX or VERTEX -> PSVDRAW or PSSECT -> PNG preview
 ```
 
-See [the development roadmap](docs/roadmap.md) and [the Perple_X workflow notes](docs/perplex_workflow.md).
+## Documentation
 
-## Development setup
+- [Installation guide](docs/installation.md)
+- [Perple_X workflow notes](docs/perplex_workflow.md)
+- [Perple_X 7.2.5 installation notes](docs/perplex_7_2_5_installation.md)
+- [Development roadmap](docs/roadmap.md)
+- [File formats and sample-data guidance](docs/file_formats.md)
 
-Requires Python 3.12 or newer.
+## Development
 
-For automatic figure previews, install 64-bit Ghostscript separately. Studio detects its `gswin64c.exe` executable; Ghostscript is not bundled or redistributed by this project.
+Requires Python 3.12 or newer. For test and lint tools:
 
 ```powershell
 python -m venv .venv
@@ -27,16 +84,14 @@ pip install -e ".[dev]"
 pytest
 ```
 
-## Project layout
+## Contributing and data policy
 
-```text
-src/perplex_studio/  Application package
-docs/                Product and technical documentation
-tests/               Automated tests
-examples/            Non-proprietary example projects
-assets/              Application artwork and static assets
-```
+Please do not commit Perple_X executables, thermodynamic databases,
+solution-model files, unpublished sample data, local `.dat` projects, or
+generated results unless their licence and scientific-data status explicitly
+allow redistribution. Anonymised, reproducible examples belong under
+`examples/` with an explanation of their provenance and expected output.
 
-## Contributing Perple_X examples
+## License
 
-Please do not commit Perple_X databases, executables, or unpublished sample data unless their licences explicitly allow redistribution. Development needs a few successful, anonymised project folders and one failing example with its console output. See [file formats and sample data](docs/file_formats.md).
+This project is distributed under the [MIT License](LICENSE).

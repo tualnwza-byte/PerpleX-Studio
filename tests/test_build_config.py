@@ -38,6 +38,24 @@ def test_read_database_extracts_phase_component_requirements(tmp_path: Path) -> 
     ]
 
 
+def test_read_database_includes_made_endmembers(tmp_path: Path) -> None:
+    database = tmp_path / "demo.dat"
+    database.write_text(
+        "begin_standard_variables\nP(bar) 1.0\nT(K) 298.15\nend_standard_variables\n"
+        "begin_components\nSIO2 60.08\nend_components\n"
+        "begin_makes\nsil8L = 8/5 silL\nend_makes\n"
+        "silL EoS = 2\nSIO2(1)\nend\n",
+        encoding="utf-8",
+    )
+
+    parsed = read_database(database)
+
+    assert [(phase.name, phase.components, phase.derived) for phase in parsed.pure_phases] == [
+        ("silL", ("SIO2",), False),
+        ("sil8L", ("SIO2",), True),
+    ]
+
+
 def test_write_convex_section_dat_creates_a_named_project(tmp_path: Path) -> None:
     database = tmp_path / "demo.dat"
     database.write_text(

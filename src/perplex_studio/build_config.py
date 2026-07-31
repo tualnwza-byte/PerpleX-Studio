@@ -19,6 +19,7 @@ class DatabasePhase:
 
     name: str
     components: tuple[str, ...]
+    derived: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,20 +65,37 @@ def read_database(path: str | Path) -> ThermodynamicDatabase:
 
 
 def _read_pure_phases(path: Path, components: tuple[str, ...]) -> tuple[DatabasePhase, ...]:
-    """Extract real phase/endmember entries and their component requirements.
-
-    Database records follow ``symbol EoS = ...`` with a component formula on
-    the next nonblank line.  ``begin_makes`` entities are deliberately omitted:
-    they are derived entities rather than phases that BUILD can exclude here.
-    """
+    """Extract raw and made phase/endmember entries with component requirements."""
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     phase_header = re.compile(r"^\s*(\S+)\s+eos\s*=", re.IGNORECASE)
+    make_definition = re.compile(r"^\s*([A-Za-z][A-Za-z0-9]*)\s*=\s*(.+)$")
     component_set = set(components)
     phases: list[DatabasePhase] = []
+    make_relations: dict[str, tuple[str, ...]] = {}
+    make_names: list[str] = []
+    inside_makes = False
     past_makes = False
     for index, raw_line in enumerate(lines):
-        if raw_line.strip().lower().startswith("end_makes"):
+        stripped = raw_line.strip()
+        if stripped.lower().startswith("begin_makes"):
+            inside_makes = True
+            continue
+        if stripped.lower().startswith("end_makes"):
+            inside_makes = False
             past_makes = True
+            continue
+        if inside_makes:
+            definition = make_definition.match(raw_line.split("|", maxsplit=1)[0])
+            if definition is not None:
+                name = definition.group(1)
+                references = tuple(
+                    token for token in re.findall(r"[A-Za-z][A-Za-z0-9]*", definition.group(2))
+                    if token.casefold() != name.casefold()
+                )
+                key = name.casefold()
+                if key not in make_relations:
+                    make_names.append(name)
+                make_relations[key] = references
             continue
         if not past_makes:
             continue
@@ -100,6 +118,26 @@ def _read_pure_phases(path: Path, components: tuple[str, ...]) -> tuple[Database
             break
         if phase_components:
             phases.append(DatabasePhase(match.group(1), phase_components))
+
+    raw_components = {phase.name.casefold(): phase.components for phase in phases}
+
+    def made_components(name: str, ancestors: frozenset[str] = frozenset()) -> tuple[str, ...]:
+        key = name.casefold()
+        if key in raw_components:
+            return raw_components[key]
+        if key in ancestors or key not in make_relations:
+            return ()
+        resolved: list[str] = []
+        for reference in make_relations[key]:
+            for component in made_components(reference, ancestors | {key}):
+                if component not in resolved:
+                    resolved.append(component)
+        return tuple(resolved)
+
+    known_names = set(raw_components)
+    for name in make_names:
+        if name.casefold() not in known_names:
+            phases.append(DatabasePhase(name, made_components(name), derived=True))
     return tuple(phases)
 
 

@@ -8,3 +8,13 @@ dist/
 *.egg-info/
 .idea/
 .vscode/
+
+# Local Perple_X projects, run outputs, and saved Studio settings.
+# Curated, redistributable examples may be stored under examples/.
+*.dat
+!examples/**/*.dat
+*.plt
+*.ps
+*.perplex-studio.json
+results/
+tmp/
