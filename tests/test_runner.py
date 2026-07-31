@@ -9,7 +9,7 @@ from perplex_studio.runner import stage_project
 def make_installation(root: Path) -> PerpleXInstallation:
     for directory in ("bin", "datafiles", "optionfiles"):
         (root / directory).mkdir(parents=True)
-    for executable in ("build.exe", "vertex.exe", "werami.exe", "convex.exe", "psvdraw.exe"):
+    for executable in ("build.exe", "vertex.exe", "werami.exe", "convex.exe", "psvdraw.exe", "pssect.exe"):
         (root / "bin" / executable).touch()
     (root / "optionfiles" / "perplex_option.dat").write_text("default options\n")
     (root / "optionfiles" / "perplex_plot_option.dat").write_text("default plot options\n")

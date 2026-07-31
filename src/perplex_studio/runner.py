@@ -20,6 +20,18 @@ class StagedProject:
     copied_dependencies: tuple[Path, ...]
 
 
+def calculation_type(project_file: str | Path) -> int:
+    """Return the Perple_X calculation type recorded in a BUILD definition."""
+    path = Path(project_file)
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if len(lines) < 7:
+        raise ValueError(f"Project file is incomplete: {path}")
+    try:
+        return int(lines[6].split()[0])
+    except (IndexError, ValueError) as error:
+        raise ValueError(f"Cannot read calculation type from: {path}") from error
+
+
 def find_ghostscript() -> Path | None:
     """Locate a user-installed 64-bit Ghostscript command-line executable."""
     command = which("gswin64c.exe") or which("gswin64c")
@@ -113,6 +125,46 @@ def run_convex(
         [str(installation.executables["convex.exe"])],
         cwd=staged_project.working_directory,
         input=f"{staged_project.project_name}\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_seconds,
+        check=False,
+    )
+
+
+def run_vertex(
+    staged_project: StagedProject,
+    installation: PerpleXInstallation,
+    *,
+    timeout_seconds: float | None = None,
+) -> CompletedProcess[str]:
+    """Run VERTEX for a staged constrained-minimization project."""
+    return run(
+        [str(installation.executables["vertex.exe"])],
+        cwd=staged_project.working_directory,
+        input=f"{staged_project.project_name}\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_seconds,
+        check=False,
+    )
+
+
+def run_pssect(
+    staged_project: StagedProject,
+    installation: PerpleXInstallation,
+    *,
+    timeout_seconds: float | None = None,
+) -> CompletedProcess[str]:
+    """Render a VERTEX grid result to PostScript with default PSSECT options."""
+    return run(
+        [str(installation.executables["pssect.exe"])],
+        cwd=staged_project.working_directory,
+        input=f"{staged_project.project_name}\nn\n",
         capture_output=True,
         text=True,
         encoding="utf-8",

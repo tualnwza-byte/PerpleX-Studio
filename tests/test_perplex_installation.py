@@ -8,7 +8,7 @@ from perplex_studio.perplex_installation import PerpleXInstallation
 def make_installation(root: Path) -> None:
     for directory in ("bin", "datafiles", "optionfiles"):
         (root / directory).mkdir(parents=True, exist_ok=True)
-    for executable in ("build.exe", "vertex.exe", "werami.exe", "convex.exe", "psvdraw.exe"):
+    for executable in ("build.exe", "vertex.exe", "werami.exe", "convex.exe", "psvdraw.exe", "pssect.exe"):
         (root / "bin" / executable).touch()
     (root / "optionfiles" / "perplex_option.dat").touch()
 

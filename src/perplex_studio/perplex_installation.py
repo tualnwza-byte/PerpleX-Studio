@@ -12,6 +12,7 @@ REQUIRED_EXECUTABLES = (
     "vertex.exe",
     "werami.exe",
     "psvdraw.exe",
+    "pssect.exe",
 )
 OPTION_FILE_NAME = "perplex_option.dat"
 
