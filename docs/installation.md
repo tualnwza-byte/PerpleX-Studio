@@ -91,6 +91,12 @@ If that command is unavailable, run:
 python -m perplex_studio.app
 ```
 
+## Optional desktop shortcut
+
+After Studio opens, click **Create Desktop Shortcut** on the **Run and Figure**
+page. This creates (or updates) `PerpleX Studio.lnk` on your Windows desktop.
+The shortcut starts Studio with the same Python environment used to create it.
+
 ## First calculation
 
 1. In **Run and Figure**, browse to the Perple_X installation root.
