@@ -21,6 +21,7 @@ from perplex_studio.runner import (
     find_ghostscript,
     stage_project,
 )
+from perplex_studio.shortcut import create_desktop_shortcut
 
 
 def main() -> None:
@@ -637,6 +638,9 @@ def main() -> None:
             self.project_edit = QLineEdit(self._settings.value("project_path", "", type=str))
             self.run_button = QPushButton("Run Perple_X Calculation")
             self.run_button.clicked.connect(self._run_convex)
+            self.shortcut_button = QPushButton("Create Desktop Shortcut")
+            self.shortcut_button.setToolTip("Optional: create a Windows desktop shortcut for PerpleX Studio.")
+            self.shortcut_button.clicked.connect(self._create_desktop_shortcut)
             self.save_figure_button = QPushButton("Save Figure As…")
             self.save_figure_button.setEnabled(False)
             self.save_figure_button.clicked.connect(self._save_figure_as)
@@ -672,6 +676,7 @@ def main() -> None:
             actions = QHBoxLayout()
             actions.addWidget(self.run_button)
             actions.addWidget(self.save_figure_button)
+            actions.addWidget(self.shortcut_button)
             actions.addStretch()
             layout.addLayout(actions)
             layout.addWidget(QLabel("Console"))
@@ -735,6 +740,18 @@ def main() -> None:
             )
             if filename:
                 self.project_edit.setText(filename)
+
+        def _create_desktop_shortcut(self) -> None:
+            try:
+                shortcut = create_desktop_shortcut(sys.executable, Path.cwd())
+            except (OSError, ValueError) as error:
+                QMessageBox.warning(self, "Could not create shortcut", str(error))
+                return
+            QMessageBox.information(
+                self,
+                "Desktop shortcut created",
+                f"Created: {shortcut}\n\nYou can now open PerpleX Studio from this shortcut.",
+            )
 
         def _run_convex(self) -> None:
             if self._process is not None:
