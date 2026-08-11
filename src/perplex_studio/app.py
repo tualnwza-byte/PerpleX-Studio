@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -24,11 +25,16 @@ from perplex_studio.runner import (
 from perplex_studio.shortcut import create_desktop_shortcut
 
 
+def studio_icon_path() -> Path:
+    """Return the bundled Windows icon when it is available."""
+    return Path(__file__).with_name("assets") / "PerpleX_Studio.ico"
+
+
 def main() -> None:
     """Start the PerpleX Studio desktop application."""
     try:
-        from PySide6.QtCore import QLocale, QProcess, QSettings, Qt
-        from PySide6.QtGui import QPixmap
+        from PySide6.QtCore import QEvent, QLocale, QProcess, QSettings, Qt
+        from PySide6.QtGui import QIcon, QPixmap
         from PySide6.QtWidgets import (
             QApplication,
             QFileDialog,
@@ -60,6 +66,59 @@ def main() -> None:
             "PySide6 is required. Activate the project environment and run: "
             'pip install -e ".[dev]"'
         ) from error
+
+    class FigurePreviewScrollArea(QScrollArea):
+        """A zoomed figure viewport that supports Space + drag panning."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._space_pressed = False
+            self._panning = False
+            self._last_pan_position = None
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            QApplication.instance().installEventFilter(self)
+
+        def setWidget(self, widget: QWidget) -> None:  # type: ignore[override]
+            super().setWidget(widget)
+            widget.installEventFilter(self)
+
+        def eventFilter(self, watched: object, event: object) -> bool:  # type: ignore[override]
+            event_type = event.type()
+            if event_type == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Space:
+                if self.underMouse() or (self.widget() is not None and self.widget().underMouse()):
+                    self._space_pressed = True
+                    self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+                    return True
+            elif event_type == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Space:
+                if self._space_pressed:
+                    self._space_pressed = False
+                    self._panning = False
+                    self.viewport().unsetCursor()
+                    return True
+
+            if watched is self.widget():
+                if (
+                    event_type == QEvent.Type.MouseButtonPress
+                    and self._space_pressed
+                    and event.button() == Qt.MouseButton.LeftButton
+                ):
+                    self._panning = True
+                    self._last_pan_position = event.globalPosition().toPoint()
+                    self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                    return True
+                if event_type == QEvent.Type.MouseMove and self._panning:
+                    position = event.globalPosition().toPoint()
+                    delta = position - self._last_pan_position
+                    self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+                    self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+                    self._last_pan_position = position
+                    return True
+                if event_type == QEvent.Type.MouseButtonRelease and self._panning:
+                    self._panning = False
+                    self._last_pan_position = None
+                    self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+                    return True
+            return super().eventFilter(watched, event)
 
     class BuildEditor(QWidget):
         """Input editor for the initial, data-driven BUILD workflow."""
@@ -96,9 +155,14 @@ def main() -> None:
             super().__init__()
             self.installation_edit = installation_edit
             self.project_created = project_created
+            self._settings = QSettings("PerpleX Studio", "PerpleX Studio")
+            self._defaults_loaded = False
             self.database: object | None = None
             self.project_name = QLineEdit("my_project")
-            self.project_directory = QLineEdit(str(Path.cwd()))
+            default_directory = self._settings.value(
+                "default_project_directory", str(Path.cwd()), type=str
+            )
+            self.project_directory = QLineEdit(default_directory)
             self.project_directory_button = QPushButton("Browse…")
             self.project_directory_button.clicked.connect(self._choose_project_directory)
             self.database_menu = QComboBox()
@@ -165,6 +229,11 @@ def main() -> None:
                 "Reset Build Input settings to Studio defaults. The Perple_X installation and database stay selected."
             )
             self.restore_defaults_button.clicked.connect(self._restore_defaults)
+            self.set_default_button = QPushButton("Set as Default")
+            self.set_default_button.setToolTip(
+                "Save the current BUILD choices as the starting template for future sessions."
+            )
+            self.set_default_button.clicked.connect(self._save_as_default)
 
             root = QVBoxLayout(self)
             header = QLabel(
@@ -180,7 +249,12 @@ def main() -> None:
             directory_layout.setContentsMargins(0, 0, 0, 0)
             directory_layout.addWidget(self.project_directory, 1)
             directory_layout.addWidget(self.project_directory_button)
-            identity.addRow("Project folder", directory_row)
+            identity.addRow("Projects folder", directory_row)
+            project_folder_help = QLabel(
+                "Studio creates a separate folder named after the project inside this location."
+            )
+            project_folder_help.setWordWrap(True)
+            identity.addRow("", project_folder_help)
             identity.addRow("Thermodynamic database", self.database_menu)
             identity.addRow("Computational option file", self.option_menu)
             identity.addRow("Specify components mode", self.component_mode)
@@ -242,6 +316,7 @@ def main() -> None:
             actions.addWidget(self.create_dat_button)
             actions.addWidget(self.save_button)
             actions.addWidget(self.restore_defaults_button)
+            actions.addWidget(self.set_default_button)
             actions.addStretch()
             root.addLayout(actions)
             root.addStretch()
@@ -296,6 +371,7 @@ def main() -> None:
             self.option_menu.setCurrentIndex(max(0, default_index))
             self.database_menu.blockSignals(False)
             self._load_database()
+            self._apply_saved_defaults()
 
         def _load_database(self) -> None:
             path = self.database_menu.currentData()
@@ -397,7 +473,7 @@ def main() -> None:
 
         def _choose_project_directory(self) -> None:
             directory = QFileDialog.getExistingDirectory(
-                self, "Select project folder", self.project_directory.text()
+                self, "Select projects folder", self.project_directory.text()
             )
             if directory:
                 self.project_directory.setText(directory)
@@ -444,6 +520,98 @@ def main() -> None:
                 self.x_variable.setCurrentText("T(K)")
             if self.y_variable.findText("P(bar)") >= 0:
                 self.y_variable.setCurrentText("P(bar)")
+
+        @staticmethod
+        def _set_checked(widget: QListWidget, names: tuple[str, ...] | list[str]) -> None:
+            selected = set(names)
+            for index in range(widget.count()):
+                item = widget.item(index)
+                item.setCheckState(
+                    Qt.CheckState.Checked if item.text() in selected else Qt.CheckState.Unchecked
+                )
+
+        def _set_phase_exclusions(self, names: tuple[str, ...] | list[str]) -> None:
+            selected = set(names)
+            for index in range(self.phase_exclusions.count()):
+                item = self.phase_exclusions.item(index)
+                item.setCheckState(
+                    Qt.CheckState.Checked
+                    if item.data(Qt.ItemDataRole.UserRole) in selected
+                    else Qt.CheckState.Unchecked
+                )
+
+        def _save_as_default(self) -> None:
+            setup = self._collect_setup()
+            if setup is None:
+                return
+            self._settings.setValue("build_default_setup", json.dumps(setup.__dict__))
+            QMessageBox.information(
+                self,
+                "Default template saved",
+                "These BUILD choices will be restored when PerpleX Studio opens. "
+                "Project name and project folder remain user-specific.",
+            )
+
+        def _apply_saved_defaults(self) -> None:
+            if self._defaults_loaded:
+                return
+            self._defaults_loaded = True
+            stored = self._settings.value("build_default_setup", "", type=str)
+            if not stored:
+                return
+            try:
+                defaults = json.loads(stored)
+            except (TypeError, json.JSONDecodeError):
+                return
+            database_index = self.database_menu.findText(defaults.get("database_file", ""))
+            if database_index >= 0:
+                self.database_menu.setCurrentIndex(database_index)
+            option_index = self.option_menu.findText(defaults.get("option_file", ""))
+            if option_index >= 0:
+                self.option_menu.setCurrentIndex(option_index)
+            mode_index = self.component_mode.findText(defaults.get("component_mode", ""))
+            if mode_index >= 0:
+                self.component_mode.setCurrentIndex(mode_index)
+            self.saturated_fluid.setChecked(bool(defaults.get("saturated_fluid", False)))
+            self.h2o.setChecked("H2O" in defaults.get("saturated_components", ()))
+            self.co2.setChecked("CO2" in defaults.get("saturated_components", ()))
+            self.saturated_component_constraint.setChecked(
+                bool(defaults.get("saturated_component_constraint", False))
+            )
+            self._set_checked(
+                self.saturated_components,
+                tuple(name for name in defaults.get("saturated_components", ()) if name not in {"H2O", "CO2"}),
+            )
+            self._component_amounts = {
+                name: amount for name, amount in defaults.get("component_amounts", ())
+            }
+            self._set_checked(self.components, tuple(defaults.get("thermodynamic_components", ())))
+            self.independent_potentials.setChecked(bool(defaults.get("independent_potentials", False)))
+            eos_index = self.fluid_eos.findText(defaults.get("fluid_eos", ""))
+            if eos_index >= 0:
+                self.fluid_eos.setCurrentIndex(eos_index)
+            self.geothermal_gradient.setChecked(bool(defaults.get("geothermal_gradient", False)))
+            diagram_index = self.diagram_type.findText(defaults.get("diagram_type", ""))
+            if diagram_index >= 0:
+                self.diagram_type.setCurrentIndex(diagram_index)
+            for widget, key in (
+                (self.x_variable, "x_variable"),
+                (self.y_variable, "y_variable"),
+                (self.section_variable, "section_variable"),
+            ):
+                index = widget.findText(defaults.get(key, ""))
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+            self.x_minimum.setValue(float(defaults.get("x_minimum", 0.0)))
+            self.x_maximum.setValue(float(defaults.get("x_maximum", 0.0)))
+            self.y_minimum.setValue(float(defaults.get("y_minimum", 0.0)))
+            self.y_maximum.setValue(float(defaults.get("y_maximum", 0.0)))
+            self.section_value.setValue(float(defaults.get("section_value", 0.0)))
+            self.print_file.setChecked(bool(defaults.get("print_file", False)))
+            self.exclude_phases.setChecked(bool(defaults.get("exclude_phases", False)))
+            self.solution_models.setChecked(bool(defaults.get("solution_models", False)))
+            self._sync_component_amounts()
+            self._set_phase_exclusions(tuple(defaults.get("excluded_phase_names", ())))
 
         def _collect_setup(self) -> BuildSetup | None:
             if self.database_menu.currentData() is None or self.option_menu.currentData() is None:
@@ -501,10 +669,16 @@ def main() -> None:
             setup = self._collect_setup()
             if setup is None:
                 return
+            root = Path(self.project_directory.text()).expanduser()
+            if not root.is_dir():
+                QMessageBox.warning(self, "Invalid projects folder", "Select an existing projects folder.")
+                return
+            project_folder = root / setup.project_name
+            project_folder.mkdir(parents=True, exist_ok=True)
             filename, _ = QFileDialog.getSaveFileName(
                 self,
                 "Save Studio BUILD setup",
-                f"{setup.project_name}.perplex-studio.json",
+                str(project_folder / f"{setup.project_name}.perplex-studio.json"),
                 "Studio setup (*.json)",
             )
             if filename:
@@ -519,10 +693,20 @@ def main() -> None:
                 QMessageBox.warning(self, "No database", "Select a valid thermodynamic database.")
                 return
             database = self.database
-            folder = Path(self.project_directory.text()).expanduser()
-            if not folder.is_dir():
-                QMessageBox.warning(self, "Invalid project folder", "Select an existing project folder.")
+            root = Path(self.project_directory.text()).expanduser()
+            if not root.is_dir():
+                QMessageBox.warning(self, "Invalid projects folder", "Select an existing projects folder.")
                 return
+            folder = root / setup.project_name
+            if folder.exists() and any(folder.iterdir()) and not (folder / f"{setup.project_name}.dat").exists():
+                answer = QMessageBox.question(
+                    self,
+                    "Use existing project folder?",
+                    f"{folder.name} already contains files. Continue and keep them?",
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            folder.mkdir(parents=True, exist_ok=True)
             output = folder / f"{setup.project_name}.dat"
             if output.exists():
                 answer = QMessageBox.question(
@@ -532,12 +716,177 @@ def main() -> None:
                     return
             try:
                 created = write_convex_section_dat(setup, database, output)
+                save_build_setup(setup, folder / f"{setup.project_name}.perplex-studio.json")
             except ValueError as error:
                 QMessageBox.warning(self, "Cannot create .dat project", str(error))
                 return
-            QMessageBox.information(self, "Perple_X project created", f"Created: {created}")
+            QMessageBox.information(
+                self,
+                "Perple_X project created",
+                f"Project folder: {folder}\n\nCreated: {created.name}\nSaved: {setup.project_name}.perplex-studio.json",
+            )
             if callable(self.project_created):
                 self.project_created(created)
+
+    class SettingsPage(QWidget):
+        """Application-wide preferences, kept separate from BUILD inputs."""
+
+        def __init__(self, apply_callback: object, create_shortcut_callback: object) -> None:
+            super().__init__()
+            self._settings = QSettings("PerpleX Studio", "PerpleX Studio")
+            self._apply_callback = apply_callback
+            self._create_shortcut_callback = create_shortcut_callback
+
+            self.installation_edit = QLineEdit(
+                self._settings.value("installation_path", "", type=str)
+            )
+            self.project_folder_edit = QLineEdit(
+                self._settings.value("default_project_directory", str(Path.cwd()), type=str)
+            )
+            configured_ghostscript = self._settings.value("ghostscript_path", "", type=str)
+            detected_ghostscript = find_ghostscript()
+            self.ghostscript_edit = QLineEdit(
+                configured_ghostscript or (str(detected_ghostscript) if detected_ghostscript else "")
+            )
+            self.shortcut_option = QCheckBox("Enable the optional desktop shortcut")
+            self.shortcut_option.setChecked(
+                self._settings.value("desktop_shortcut_option", True, type=bool)
+            )
+            self.shortcut_button = QPushButton("Create Desktop Shortcut")
+            self.shortcut_button.setToolTip(
+                "Create or update a PerpleX Studio shortcut on the current Windows desktop."
+            )
+            self.shortcut_button.setEnabled(self.shortcut_option.isChecked())
+            self.shortcut_option.toggled.connect(self.shortcut_button.setEnabled)
+            self.shortcut_option.toggled.connect(
+                lambda checked: self._settings.setValue("desktop_shortcut_option", checked)
+            )
+            self.shortcut_button.clicked.connect(self._create_shortcut)
+
+            self.save_button = QPushButton("Save Settings")
+            self.save_button.clicked.connect(self._save)
+            self.reset_button = QPushButton("Restore Studio Defaults")
+            self.reset_button.setToolTip(
+                "Reset Studio preferences and saved BUILD templates. Project files are not changed."
+            )
+            self.reset_button.clicked.connect(self._reset)
+
+            root = QVBoxLayout(self)
+            header = QLabel(
+                "Application preferences. Scientific choices such as bulk composition, "
+                "solution models, and P–T limits remain in Build Input."
+            )
+            header.setWordWrap(True)
+            root.addWidget(header)
+
+            paths = QFormLayout()
+            paths.addRow("Default Perple_X installation", self._path_row(
+                self.installation_edit, "Select Perple_X installation", True
+            ))
+            paths.addRow("Default projects folder", self._path_row(
+                self.project_folder_edit, "Select default projects folder", True
+            ))
+            paths.addRow("Ghostscript executable", self._path_row(
+                self.ghostscript_edit, "Select gswin64c.exe", False
+            ))
+            root.addWidget(self._box("Paths and tools", paths))
+
+            shortcut_layout = QVBoxLayout()
+            shortcut_layout.addWidget(self.shortcut_option)
+            shortcut_layout.addWidget(QLabel(
+                "A shortcut is never required. It opens Studio using the same Python "
+                "environment used to create it."
+            ))
+            shortcut_layout.addWidget(self.shortcut_button)
+            root.addWidget(self._box("Desktop shortcut", shortcut_layout))
+
+            about = QLabel(
+                '<b>PerpleX Studio</b><br>'
+                'Experimental graphical interface for Perple_X.<br><br>'
+                'Developed with assistance from AI coding tools. It does not use AI to '
+                'perform thermodynamic calculations or interpret scientific results.<br><br>'
+                '<a href="https://www.perplex.ethz.ch/">Perple_X official website</a> '
+                '· <a href="https://github.com/tualnwza-byte/PerpleX-Studio">Studio source code</a>'
+            )
+            about.setWordWrap(True)
+            about.setOpenExternalLinks(True)
+            root.addWidget(self._box("About", about))
+
+            actions = QHBoxLayout()
+            actions.addWidget(self.save_button)
+            actions.addWidget(self.reset_button)
+            actions.addStretch()
+            root.addLayout(actions)
+            root.addStretch()
+
+        def _box(self, title: str, content: object) -> QGroupBox:
+            box = QGroupBox(title)
+            if isinstance(content, QFormLayout):
+                box.setLayout(content)
+            else:
+                layout = QVBoxLayout(box)
+                if isinstance(content, QWidget):
+                    layout.addWidget(content)
+                else:
+                    layout.addLayout(content)
+            return box
+
+        def _path_row(self, field: QLineEdit, title: str, directory: bool) -> QWidget:
+            row = QWidget()
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(0, 0, 0, 0)
+            button = QPushButton("Browse…")
+
+            def choose() -> None:
+                if directory:
+                    value = QFileDialog.getExistingDirectory(self, title, field.text())
+                else:
+                    value, _ = QFileDialog.getOpenFileName(self, title, field.text(), "Executable (*.exe)")
+                if value:
+                    field.setText(value)
+
+            button.clicked.connect(choose)
+            layout.addWidget(field, 1)
+            layout.addWidget(button)
+            return row
+
+        def _save(self) -> None:
+            project_folder = Path(self.project_folder_edit.text()).expanduser()
+            if not project_folder.is_dir():
+                QMessageBox.warning(self, "Invalid projects folder", "Choose an existing default projects folder.")
+                return
+            ghostscript_value = self.ghostscript_edit.text().strip()
+            if ghostscript_value and not Path(ghostscript_value).is_file():
+                QMessageBox.warning(self, "Invalid Ghostscript", "Choose the gswin64c.exe executable or clear this field.")
+                return
+            self._settings.setValue("installation_path", self.installation_edit.text().strip())
+            self._settings.setValue("default_project_directory", str(project_folder))
+            self._settings.setValue("ghostscript_path", ghostscript_value)
+            if callable(self._apply_callback):
+                self._apply_callback(self.installation_edit.text().strip(), str(project_folder))
+            QMessageBox.information(self, "Settings saved", "Studio preferences were saved.")
+
+        def _create_shortcut(self) -> None:
+            if callable(self._create_shortcut_callback):
+                self._create_shortcut_callback()
+
+        def _reset(self) -> None:
+            answer = QMessageBox.question(
+                self,
+                "Restore Studio Defaults?",
+                "This resets Studio preferences and saved BUILD templates. It does not delete "
+                "Perple_X installations, project files, or results.",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self._settings.clear()
+            self.installation_edit.clear()
+            self.project_folder_edit.setText(str(Path.cwd()))
+            self.ghostscript_edit.setText(str(find_ghostscript() or ""))
+            self.shortcut_option.setChecked(True)
+            if callable(self._apply_callback):
+                self._apply_callback("", str(Path.cwd()))
+            QMessageBox.information(self, "Studio defaults restored", "Restart Studio to reload every saved template.")
 
     class MainWindow(QMainWindow):
         """Interface for running staged Perple_X Convex-Hull and grid projects."""
@@ -545,6 +894,8 @@ def main() -> None:
         def __init__(self) -> None:
             super().__init__()
             self.setWindowTitle("PerpleX Studio")
+            if studio_icon_path().is_file():
+                self.setWindowIcon(QIcon(str(studio_icon_path())))
             self.resize(1080, 720)
             self.setStyleSheet(
                 """
@@ -638,9 +989,6 @@ def main() -> None:
             self.project_edit = QLineEdit(self._settings.value("project_path", "", type=str))
             self.run_button = QPushButton("Run Perple_X Calculation")
             self.run_button.clicked.connect(self._run_convex)
-            self.shortcut_button = QPushButton("Create Desktop Shortcut")
-            self.shortcut_button.setToolTip("Optional: create a Windows desktop shortcut for PerpleX Studio.")
-            self.shortcut_button.clicked.connect(self._create_desktop_shortcut)
             self.save_figure_button = QPushButton("Save Figure As…")
             self.save_figure_button.setEnabled(False)
             self.save_figure_button.clicked.connect(self._save_figure_as)
@@ -658,7 +1006,7 @@ def main() -> None:
             self.figure = QLabel("The generated pseudosection preview will appear here.")
             self.figure.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.figure.setStyleSheet("QLabel { background: white; color: #52606d; }")
-            self.figure_scroll = QScrollArea()
+            self.figure_scroll = FigurePreviewScrollArea()
             self.figure_scroll.setStyleSheet("QScrollArea { background: white; border: 1px solid #d9e2ec; }")
             self.figure_scroll.setBackgroundRole(self.figure.backgroundRole())
             self.figure_scroll.setWidget(self.figure)
@@ -666,6 +1014,7 @@ def main() -> None:
             self.figure_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
             self.build_editor = BuildEditor(self.installation_edit, self._use_created_project)
             self.build_editor.refresh_files()
+            self.settings_page = SettingsPage(self._apply_settings, self._create_desktop_shortcut)
 
             form = QFormLayout()
             form.addRow("Perple_X installation", self._path_row(self.installation_edit, self._choose_installation))
@@ -676,13 +1025,12 @@ def main() -> None:
             actions = QHBoxLayout()
             actions.addWidget(self.run_button)
             actions.addWidget(self.save_figure_button)
-            actions.addWidget(self.shortcut_button)
             actions.addStretch()
             layout.addLayout(actions)
             layout.addWidget(QLabel("Console"))
             layout.addWidget(self.log, 1)
             figure_header = QHBoxLayout()
-            figure_header.addWidget(QLabel("Figure preview"))
+            figure_header.addWidget(QLabel("Figure preview — hold Space and drag to pan"))
             figure_header.addStretch()
             figure_header.addWidget(self.zoom_out_button)
             figure_header.addWidget(self.zoom_in_button)
@@ -702,6 +1050,7 @@ def main() -> None:
             self.tabs = QTabWidget()
             self.tabs.addTab(build_scroll, "Build Input")
             self.tabs.addTab(run_scroll, "Run and Figure")
+            self.tabs.addTab(self.settings_page, "Settings")
             self.setCentralWidget(self.tabs)
             self.setStatusBar(QStatusBar())
             self.statusBar().showMessage("Select a Perple_X installation and project definition.")
@@ -731,6 +1080,11 @@ def main() -> None:
                 f"Created {project_file.name}. Run it when the BUILD selections are ready."
             )
 
+        def _apply_settings(self, installation_path: str, project_folder: str) -> None:
+            self.installation_edit.setText(installation_path)
+            self.build_editor.project_directory.setText(project_folder)
+            self.build_editor.refresh_files()
+
         def _choose_project(self) -> None:
             filename, _ = QFileDialog.getOpenFileName(
                 self,
@@ -743,7 +1097,9 @@ def main() -> None:
 
         def _create_desktop_shortcut(self) -> None:
             try:
-                shortcut = create_desktop_shortcut(sys.executable, Path.cwd())
+                shortcut = create_desktop_shortcut(
+                    sys.executable, Path.cwd(), studio_icon_path()
+                )
             except (OSError, ValueError) as error:
                 QMessageBox.warning(self, "Could not create shortcut", str(error))
                 return
@@ -758,7 +1114,10 @@ def main() -> None:
                 return
             try:
                 installation = PerpleXInstallation.discover(self.installation_edit.text())
-                ghostscript = find_ghostscript()
+                configured_ghostscript = Path(
+                    self._settings.value("ghostscript_path", "", type=str)
+                )
+                ghostscript = configured_ghostscript if configured_ghostscript.is_file() else find_ghostscript()
                 if ghostscript is None:
                     raise ValueError(
                         "Ghostscript was not found. Install it to generate PNG figure previews."
@@ -980,6 +1339,8 @@ def main() -> None:
             self.log.ensureCursorVisible()
 
     application = QApplication(sys.argv)
+    if studio_icon_path().is_file():
+        application.setWindowIcon(QIcon(str(studio_icon_path())))
     window = MainWindow()
     window.show()
     raise SystemExit(application.exec())

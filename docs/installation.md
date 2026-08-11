@@ -4,6 +4,11 @@
 > independently. This application is not yet validated for research,
 > publication, or production workflows.
 
+> **AI-assisted development:** this interface was developed with assistance
+> from AI coding tools. It does not use AI to run Perple_X, choose modelling
+> assumptions, validate calculations, or interpret scientific results. Users
+> remain responsible for every input and conclusion.
+
 PerpleX Studio is a graphical front end for Perple_X. It does not contain the
 Perple_X engine, databases, or solution-model files: install Perple_X separately
 and select its installation folder in Studio.
@@ -16,6 +21,15 @@ and select its installation folder in Studio.
 - 64-bit Ghostscript (currently required to make the PNG figure preview)
 - PerpleX Studio source code from this repository
 
+## Official download links
+
+| Software | Download |
+| --- | --- |
+| Perple_X | [Perple_X official website](https://www.perplex.ethz.ch/) |
+| Python 3.12+ for Windows | [python.org Windows downloads](https://www.python.org/downloads/windows/) |
+| 64-bit Ghostscript | [Ghostscript downloads](https://www.ghostscript.com/releases/gsdnld.html) |
+| PerpleX Studio | [GitHub repository](https://github.com/tualnwza-byte/PerpleX-Studio) |
+
 ## Install Python
 
 Install Python from [python.org](https://www.python.org/downloads/windows/),
@@ -27,7 +41,9 @@ python --version
 
 ## Install Perple_X
 
-Extract Perple_X somewhere outside the Studio folder, for example:
+Download Perple_X and follow its official setup instructions from the
+[Perple_X website](https://www.perplex.ethz.ch/). Then extract it somewhere
+outside the Studio folder, for example:
 
 ```text
 C:\Perple_X\Perple_X_v7.2.5_Windows_64_gfortran\
@@ -93,14 +109,24 @@ python -m perplex_studio.app
 
 ## Optional desktop shortcut
 
-After Studio opens, click **Create Desktop Shortcut** on the **Run and Figure**
-page. This creates (or updates) `PerpleX Studio.lnk` on your Windows desktop.
-The shortcut starts Studio with the same Python environment used to create it.
+The **Desktop shortcut (optional)** choice is enabled by default. On the
+**Run and Figure** page, click **Create Desktop Shortcut** to create (or
+update) `PerpleX Studio.lnk` on your Windows desktop. Untick the option if you
+do not want a shortcut. The shortcut starts Studio with the same Python
+environment used to create it.
+
+## Save your default BUILD template
+
+Configure a project once, then click **Set as Default** in **Build Input**.
+Studio will restore those calculation choices the next time it opens. Project
+name and project folder remain user-specific so a default template cannot
+accidentally overwrite an earlier project.
 
 ## First calculation
 
 1. In **Run and Figure**, browse to the Perple_X installation root.
-2. Open **Build Input**, choose a project name/folder, database, and
+2. Open **Build Input**, choose a project name and a parent **Projects folder**,
+   then choose a database and
    `perplex_option.dat`.
 3. Choose a calculation mode.
    - Mode 1: `CONVEX -> PSVDRAW -> PNG`
@@ -110,6 +136,14 @@ The shortcut starts Studio with the same Python environment used to create it.
 5. Set the P-T range. Studio defaults to `T(K)` on X and `P(bar)` on Y.
 6. Click **Create .dat Project**, then **Run Perple_X Calculation**.
 7. Review the console and figure preview; use **Save Figure As** to keep a PNG.
+
+Studio creates a separate project directory for each new project, for example:
+
+```text
+C:\Users\YourName\Documents\PerpleX Projects\ak176\
+  ak176.dat
+  ak176.perplex-studio.json
+```
 
 ## Current limits
 
