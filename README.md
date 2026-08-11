@@ -16,6 +16,26 @@ up, run, inspect, and reproduce. It orchestrates the existing Perple_X
 executables; it does **not** reimplement or distribute the Perple_X
 thermodynamic engine, databases, or solution-model files.
 
+## Required downloads
+
+Install these separately before running Studio:
+
+| Software | Why it is needed | Official download |
+| --- | --- | --- |
+| Perple_X | Thermodynamic calculation engine, databases, and solution models | [Perple_X official website](https://www.perplex.ethz.ch/) |
+| Python 3.12+ (64-bit) | Runs PerpleX Studio | [Python for Windows](https://www.python.org/downloads/windows/) |
+| Ghostscript (64-bit) | Converts Perple_X PostScript figures into the PNG preview | [Ghostscript downloads](https://www.ghostscript.com/releases/gsdnld.html) |
+
+Download Studio itself from the [PerpleX Studio repository](https://github.com/tualnwza-byte/PerpleX-Studio).
+
+## AI-assisted development
+
+This experimental user interface was developed with assistance from AI coding
+tools. Studio does **not** use AI to run Perple_X calculations, choose
+scientific assumptions, validate results, or interpret pseudosections.
+Perple_X remains the thermodynamic engine, and users remain responsible for
+checking every input and scientific conclusion.
+
 ## Quick start
 
 1. Install Python 3.12+, Perple_X for Windows, and 64-bit Ghostscript.

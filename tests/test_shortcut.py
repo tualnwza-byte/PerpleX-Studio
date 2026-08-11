@@ -13,3 +13,14 @@ def test_shortcut_script_uses_the_selected_python_and_working_directory() -> Non
     assert "-m perplex_studio.app" in script
     assert "C:\\Studio\\.venv\\Scripts\\python.exe" in script
     assert "C:\\Users\\User\\Desktop\\PerpleX Studio.lnk" in script
+
+
+def test_shortcut_script_can_use_the_studio_icon() -> None:
+    script = _powershell_script(
+        Path(r"C:\Studio\.venv\Scripts\python.exe"),
+        Path(r"C:\Studio"),
+        Path(r"C:\Users\User\Desktop\PerpleX Studio.lnk"),
+        Path(r"C:\Studio\src\perplex_studio\assets\PerpleX_Studio.ico"),
+    )
+
+    assert "PerpleX_Studio.ico,0" in script
