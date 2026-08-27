@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from perplex_studio.build_config import BuildSetup, read_database, write_convex_section_dat
+from perplex_studio.build_config import (
+    BuildSetup,
+    phase_full_name,
+    read_database,
+    write_convex_section_dat,
+)
 
 
 def test_read_database_extracts_components_and_standard_variables(tmp_path: Path) -> None:
@@ -54,6 +59,13 @@ def test_read_database_includes_made_endmembers(tmp_path: Path) -> None:
         ("silL", ("SIO2",), False),
         ("sil8L", ("SIO2",), True),
     ]
+    assert parsed.pure_phases[0].formula == "SIO2(1)"
+    assert parsed.pure_phases[1].make_reaction == "sil8L = 8/5 silL"
+
+
+def test_phase_full_name_uses_known_abbreviations_without_guessing_unknown_names() -> None:
+    assert phase_full_name("fo") == "Forsterite"
+    assert phase_full_name("unknown_phase") == ""
 
 
 def test_write_convex_section_dat_creates_a_named_project(tmp_path: Path) -> None:
