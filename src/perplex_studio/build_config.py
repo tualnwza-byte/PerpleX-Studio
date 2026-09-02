@@ -20,6 +20,82 @@ class DatabasePhase:
     name: str
     components: tuple[str, ...]
     derived: bool = False
+    formula: str = ""
+    make_reaction: str = ""
+
+
+# Common Perple_X abbreviations documented in the supplied HP02 and SUPCRT92
+# abbreviation references. Unknown or database-specific names are deliberately
+# left blank instead of guessed.
+_PHASE_FULL_NAMES = {
+    "ab": "Albite",
+    "acm": "Acmite",
+    "ak": "Akermanite",
+    "alm": "Almandine",
+    "and": "Andalusite",
+    "andr": "Andradite",
+    "an": "Anorthite",
+    "anth": "Anthophyllite",
+    "atg": "Antigorite",
+    "bi": "Biotite",
+    "br": "Brucite",
+    "cc": "Calcite",
+    "cel": "Celadonite",
+    "chl": "Chlorite",
+    "clin": "Clinochlore",
+    "cor": "Corundum",
+    "crd": "Cordierite",
+    "cz": "Clinozoisite",
+    "di": "Diopside",
+    "dol": "Dolomite",
+    "en": "Enstatite",
+    "ep": "Epidote",
+    "fa": "Fayalite",
+    "fcel": "Fe-celadonite",
+    "fctd": "Fe-chloritoid",
+    "fep": "Fe-epidote",
+    "fo": "Forsterite",
+    "fs": "Ferrosilite",
+    "geh": "Gehlenite",
+    "gl": "Glaucophane",
+    "gph": "Graphite",
+    "gr": "Grossular",
+    "gt": "Garnet",
+    "hed": "Hedenbergite",
+    "hem": "Hematite",
+    "ilm": "Ilmenite",
+    "jd": "Jadeite",
+    "ky": "Kyanite",
+    "law": "Lawsonite",
+    "mctd": "Mg-chloritoid",
+    "merw": "Merwinite",
+    "mont": "Monticellite",
+    "ms": "Muscovite",
+    "mt": "Magnetite",
+    "mu": "Muscovite",
+    "pa": "Paragonite",
+    "per": "Periclase",
+    "phl": "Phlogopite",
+    "prl": "Pyrophyllite",
+    "py": "Pyrope",
+    "q": "Quartz",
+    "ru": "Rutile",
+    "sill": "Sillimanite",
+    "sp": "Spinel",
+    "sph": "Sphene (titanite)",
+    "spss": "Spessartine",
+    "ta": "Talc",
+    "teph": "Tephroite",
+    "tr": "Tremolite",
+    "wo": "Wollastonite",
+    "zo": "Zoisite",
+    "zrc": "Zircon",
+}
+
+
+def phase_full_name(abbreviation: str) -> str:
+    """Return a documented common phase name, or an empty string if unavailable."""
+    return _PHASE_FULL_NAMES.get(abbreviation.casefold(), "")
 
 
 @dataclass(frozen=True)
@@ -72,6 +148,7 @@ def _read_pure_phases(path: Path, components: tuple[str, ...]) -> tuple[Database
     component_set = set(components)
     phases: list[DatabasePhase] = []
     make_relations: dict[str, tuple[str, ...]] = {}
+    make_reactions: dict[str, str] = {}
     make_names: list[str] = []
     inside_makes = False
     past_makes = False
@@ -96,6 +173,7 @@ def _read_pure_phases(path: Path, components: tuple[str, ...]) -> tuple[Database
                 if key not in make_relations:
                     make_names.append(name)
                 make_relations[key] = references
+                make_reactions[key] = f"{name} = {definition.group(2).strip()}"
             continue
         if not past_makes:
             continue
@@ -103,6 +181,7 @@ def _read_pure_phases(path: Path, components: tuple[str, ...]) -> tuple[Database
         if match is None:
             continue
         phase_components: tuple[str, ...] = ()
+        phase_formula = ""
         for formula_line in lines[index + 1 :]:
             formula = formula_line.strip()
             if not formula or formula.startswith("|"):
@@ -115,9 +194,11 @@ def _read_pure_phases(path: Path, components: tuple[str, ...]) -> tuple[Database
                 )
             )
             phase_components = names
-            break
+            if phase_components:
+                phase_formula = formula
+                break
         if phase_components:
-            phases.append(DatabasePhase(match.group(1), phase_components))
+            phases.append(DatabasePhase(match.group(1), phase_components, formula=phase_formula))
 
     raw_components = {phase.name.casefold(): phase.components for phase in phases}
 
@@ -137,7 +218,14 @@ def _read_pure_phases(path: Path, components: tuple[str, ...]) -> tuple[Database
     known_names = set(raw_components)
     for name in make_names:
         if name.casefold() not in known_names:
-            phases.append(DatabasePhase(name, made_components(name), derived=True))
+            phases.append(
+                DatabasePhase(
+                    name,
+                    made_components(name),
+                    derived=True,
+                    make_reaction=make_reactions.get(name.casefold(), ""),
+                )
+            )
     return tuple(phases)
 
 

@@ -11,6 +11,7 @@ from tempfile import gettempdir
 
 from perplex_studio.build_config import (
     BuildSetup,
+    phase_full_name,
     read_database,
     save_build_setup,
     write_convex_section_dat,
@@ -45,6 +46,7 @@ def main() -> None:
             QDoubleSpinBox,
             QGroupBox,
             QGridLayout,
+            QHeaderView,
             QLabel,
             QLineEdit,
             QListWidget,
@@ -210,9 +212,28 @@ def main() -> None:
             self.section_value = self._number()
             self.print_file = QCheckBox("Write a print file")
             self.exclude_phases = QCheckBox("Exclude selected pure or endmember phases")
-            self.phase_exclusions = QListWidget()
-            self.phase_exclusions.setMinimumHeight(160)
-            self.phase_exclusions.setMaximumHeight(260)
+            self.phase_filter = QLineEdit()
+            self.phase_filter.setPlaceholderText(
+                "Filter by abbreviation, phase name, formula, or make reaction…"
+            )
+            self.phase_exclusions = QTableWidget(0, 5)
+            self.phase_exclusions.setHorizontalHeaderLabels(
+                ("Exclude", "Abbreviation", "Full name", "Formula", "Make reaction")
+            )
+            self.phase_exclusions.verticalHeader().setVisible(False)
+            self.phase_exclusions.setAlternatingRowColors(True)
+            self.phase_exclusions.setMinimumHeight(220)
+            self.phase_exclusions.setMaximumHeight(320)
+            phase_header = self.phase_exclusions.horizontalHeader()
+            phase_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            phase_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            phase_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            phase_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+            phase_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+            self.select_all_phases_button = QPushButton("Exclude All Visible")
+            self.clear_phase_exclusions_button = QPushButton("Clear Exclusions")
+            self.select_all_phases_button.clicked.connect(self._exclude_all_visible_phases)
+            self.clear_phase_exclusions_button.clicked.connect(self._clear_phase_exclusions)
             self.phase_exclusion_help = QLabel(
                 "Check one or more phases to exclude them. Selecting a phase automatically "
                 "enables exclusion for the generated Perple_X project."
@@ -309,6 +330,12 @@ def main() -> None:
             choices.addWidget(self.print_file)
             choices.addWidget(self.exclude_phases)
             choices.addWidget(self.phase_exclusion_help)
+            choices.addWidget(self.phase_filter)
+            phase_actions = QHBoxLayout()
+            phase_actions.addWidget(self.select_all_phases_button)
+            phase_actions.addWidget(self.clear_phase_exclusions_button)
+            phase_actions.addStretch()
+            choices.addLayout(phase_actions)
             choices.addWidget(self.phase_exclusions)
             choices.addWidget(self.solution_models)
             root.addWidget(self._box("Phases and models", choices))
@@ -325,6 +352,7 @@ def main() -> None:
             self.database_menu.currentIndexChanged.connect(lambda _index: self._load_database())
             self.components.itemChanged.connect(lambda _item: self._sync_component_amounts())
             self.phase_exclusions.itemChanged.connect(self._phase_exclusion_changed)
+            self.phase_filter.textChanged.connect(self._filter_phase_rows)
             self.saturated_components.itemChanged.connect(
                 lambda _item: self._sync_phase_exclusions(self._checked(self.components))
             )
@@ -422,7 +450,7 @@ def main() -> None:
             self._sync_phase_exclusions(selected)
 
         def _sync_phase_exclusions(self, selected_components: tuple[str, ...]) -> None:
-            checked = set(self._checked(self.phase_exclusions))
+            checked = set(self._checked_phase_exclusions())
             available = set(selected_components)
             if self.saturated_fluid.isChecked():
                 available.update(self._checked(self.saturated_components))
@@ -430,28 +458,81 @@ def main() -> None:
                     available.add("H2O")
                 if self.co2.isChecked():
                     available.add("CO2")
-            self.phase_exclusions.clear()
+            self.phase_exclusions.blockSignals(True)
+            self.phase_exclusions.setRowCount(0)
             if self.database is None:
+                self.phase_exclusions.blockSignals(False)
                 return
             for phase in self.database.pure_phases:
                 # With no components selected, expose the full database list.
                 # Once the user selects components, narrow it to compatible phases.
                 if not available or set(phase.components).issubset(available):
-                    category = "derived" if phase.derived else "phase"
-                    component_text = " + ".join(phase.components) or "components unresolved"
-                    item = QListWidgetItem(
-                        f"{phase.name}  —  {component_text}  ({category})"
+                    row = self.phase_exclusions.rowCount()
+                    self.phase_exclusions.insertRow(row)
+                    exclude_item = QTableWidgetItem()
+                    exclude_item.setData(Qt.ItemDataRole.UserRole, phase.name)
+                    exclude_item.setFlags(
+                        Qt.ItemFlag.ItemIsEnabled
+                        | Qt.ItemFlag.ItemIsSelectable
+                        | Qt.ItemFlag.ItemIsUserCheckable
                     )
-                    item.setData(Qt.ItemDataRole.UserRole, phase.name)
-                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                    item.setCheckState(
+                    exclude_item.setCheckState(
                         Qt.CheckState.Checked if phase.name in checked else Qt.CheckState.Unchecked
                     )
-                    self.phase_exclusions.addItem(item)
+                    self.phase_exclusions.setItem(row, 0, exclude_item)
+                    self._set_phase_table_item(row, 1, phase.name)
+                    self._set_phase_table_item(row, 2, phase_full_name(phase.name) or "—")
+                    self._set_phase_table_item(row, 3, phase.formula or "—")
+                    self._set_phase_table_item(row, 4, phase.make_reaction or "—")
+            self.phase_exclusions.blockSignals(False)
+            self._filter_phase_rows(self.phase_filter.text())
 
-        def _phase_exclusion_changed(self, item: QListWidgetItem) -> None:
-            if item.checkState() == Qt.CheckState.Checked:
+        def _set_phase_table_item(self, row: int, column: int, text: str) -> None:
+            item = QTableWidgetItem(text)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.phase_exclusions.setItem(row, column, item)
+
+        def _phase_exclusion_changed(self, item: QTableWidgetItem) -> None:
+            if item.column() == 0 and item.checkState() == Qt.CheckState.Checked:
                 self.exclude_phases.setChecked(True)
+
+        def _checked_phase_exclusions(self) -> tuple[str, ...]:
+            return tuple(
+                item.data(Qt.ItemDataRole.UserRole)
+                for row in range(self.phase_exclusions.rowCount())
+                if (item := self.phase_exclusions.item(row, 0)) is not None
+                and item.checkState() == Qt.CheckState.Checked
+            )
+
+        def _filter_phase_rows(self, text: str) -> None:
+            needle = text.casefold().strip()
+            for row in range(self.phase_exclusions.rowCount()):
+                row_text = " ".join(
+                    self.phase_exclusions.item(row, column).text()
+                    for column in range(1, self.phase_exclusions.columnCount())
+                    if self.phase_exclusions.item(row, column) is not None
+                ).casefold()
+                self.phase_exclusions.setRowHidden(row, bool(needle) and needle not in row_text)
+
+        def _exclude_all_visible_phases(self) -> None:
+            self.phase_exclusions.blockSignals(True)
+            for row in range(self.phase_exclusions.rowCount()):
+                if not self.phase_exclusions.isRowHidden(row):
+                    item = self.phase_exclusions.item(row, 0)
+                    if item is not None:
+                        item.setCheckState(Qt.CheckState.Checked)
+            self.phase_exclusions.blockSignals(False)
+            if self.phase_exclusions.rowCount():
+                self.exclude_phases.setChecked(True)
+
+        def _clear_phase_exclusions(self) -> None:
+            self.phase_exclusions.blockSignals(True)
+            for row in range(self.phase_exclusions.rowCount()):
+                item = self.phase_exclusions.item(row, 0)
+                if item is not None:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+            self.phase_exclusions.blockSignals(False)
+            self.exclude_phases.setChecked(False)
 
         def _set_fluid_enabled(self, enabled: bool) -> None:
             for control in (
@@ -506,9 +587,10 @@ def main() -> None:
             option_index = self.option_menu.findText("perplex_option.dat")
             if option_index >= 0:
                 self.option_menu.setCurrentIndex(option_index)
-            for widget in (self.components, self.saturated_components, self.phase_exclusions):
+            for widget in (self.components, self.saturated_components):
                 for index in range(widget.count()):
                     widget.item(index).setCheckState(Qt.CheckState.Unchecked)
+            self._clear_phase_exclusions()
             self._component_amounts.clear()
             self._sync_component_amounts()
             self.x_minimum.setValue(0.0)
@@ -532,13 +614,17 @@ def main() -> None:
 
         def _set_phase_exclusions(self, names: tuple[str, ...] | list[str]) -> None:
             selected = set(names)
-            for index in range(self.phase_exclusions.count()):
-                item = self.phase_exclusions.item(index)
+            self.phase_exclusions.blockSignals(True)
+            for index in range(self.phase_exclusions.rowCount()):
+                item = self.phase_exclusions.item(index, 0)
+                if item is None:
+                    continue
                 item.setCheckState(
                     Qt.CheckState.Checked
                     if item.data(Qt.ItemDataRole.UserRole) in selected
                     else Qt.CheckState.Unchecked
                 )
+            self.phase_exclusions.blockSignals(False)
 
         def _save_as_default(self) -> None:
             setup = self._collect_setup()
@@ -652,11 +738,7 @@ def main() -> None:
                 section_value=self.section_value.value(),
                 print_file=self.print_file.isChecked(),
                 exclude_phases=self.exclude_phases.isChecked(),
-                excluded_phase_names=tuple(
-                    self.phase_exclusions.item(index).data(Qt.ItemDataRole.UserRole)
-                    for index in range(self.phase_exclusions.count())
-                    if self.phase_exclusions.item(index).checkState() == Qt.CheckState.Checked
-                ),
+                excluded_phase_names=self._checked_phase_exclusions(),
                 solution_models=self.solution_models.isChecked(),
                 title=self.title.text(),
                 component_amounts=tuple(
