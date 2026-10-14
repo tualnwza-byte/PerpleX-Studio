@@ -24,7 +24,7 @@ Install these separately before running Studio:
 | --- | --- | --- |
 | Perple_X | Thermodynamic calculation engine, databases, and solution models | [Perple_X official website](https://www.perplex.ethz.ch/) |
 | Python 3.12+ (64-bit) | Runs PerpleX Studio | [Python for Windows](https://www.python.org/downloads/windows/) |
-| Ghostscript (64-bit) | Converts Perple_X PostScript figures into the PNG preview | [Ghostscript downloads](https://www.ghostscript.com/releases/gsdnld.html) |
+| VectorCraft (optional) | External vector editor for editing exported diagram SVGs | [VectorCraft releases](https://github.com/storytold/vectorcraft/releases/latest) |
 
 Download Studio itself from the [PerpleX Studio repository](https://github.com/tualnwza-byte/PerpleX-Studio).
 
@@ -38,7 +38,7 @@ checking every input and scientific conclusion.
 
 ## Quick start
 
-1. Install Python 3.12+, Perple_X for Windows, and 64-bit Ghostscript.
+1. Install Python 3.12+ and Perple_X for Windows.
 2. Download this repository, then run:
 
    ```powershell
@@ -59,9 +59,10 @@ For complete instructions, including troubleshooting, see the
 | Area | Current support |
 | --- | --- |
 | BUILD input | Guided project name, database, option-file, components, bulk amounts, P-T axes, phase exclusion, and title entry |
-| Convex-Hull projects | `CONVEX -> PSVDRAW -> PNG` |
-| 2D constrained minimisation | `VERTEX -> PSSECT -> PNG` |
-| Figure handling | Console log, zoomable PNG preview, and Save As |
+| Convex-Hull projects | `CONVEX -> PSVDRAW -> native vector preview` |
+| 2D constrained minimisation | `VERTEX -> PSSECT -> native vector preview` |
+| Figure handling | Qt-native SVG rendering, vector zoom, and Save As SVG/PNG/PostScript |
+| Vector editing | Optional **Edit in VectorCraft…** export/launch/reload workflow |
 | Phase exclusion | Database-aware raw and derived/endmember checklist |
 | Installation safety | Runs are staged outside the original Perple_X installation |
 
@@ -82,7 +83,7 @@ invalid Perple_X input.
 ## Intended workflow
 
 ```text
-Project settings -> BUILD project (.dat) -> CONVEX or VERTEX -> PSVDRAW or PSSECT -> PNG preview
+Project settings -> BUILD project (.dat) -> CONVEX or VERTEX -> PSVDRAW or PSSECT -> native vector preview
 ```
 
 ## Documentation

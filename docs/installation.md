@@ -18,7 +18,6 @@ and select its installation folder in Studio.
 - Windows 10 or 11 (64-bit)
 - Python 3.12 or newer
 - A Windows 64-bit Perple_X installation, for example Perple_X 7.2.5
-- 64-bit Ghostscript (currently required to make the PNG figure preview)
 - PerpleX Studio source code from this repository
 
 ## Official download links
@@ -27,7 +26,7 @@ and select its installation folder in Studio.
 | --- | --- |
 | Perple_X | [Perple_X official website](https://www.perplex.ethz.ch/) |
 | Python 3.12+ for Windows | [python.org Windows downloads](https://www.python.org/downloads/windows/) |
-| 64-bit Ghostscript | [Ghostscript downloads](https://www.ghostscript.com/releases/gsdnld.html) |
+| VectorCraft (optional SVG editor) | [GitHub releases](https://github.com/storytold/vectorcraft/releases/latest) |
 | PerpleX Studio | [GitHub repository](https://github.com/tualnwza-byte/PerpleX-Studio) |
 
 ## Install Python
@@ -61,11 +60,15 @@ Perple_X_v7.2.5_Windows_64_gfortran\
 Studio copies required files to a separate run folder and does not change the
 original Perple_X installation.
 
-## Install Ghostscript
+## Optional: edit figures in VectorCraft
 
-Install 64-bit Ghostscript from
-[ghostscript.com](https://www.ghostscript.com/releases/gsdnld.html). Studio
-normally detects `gswin64c.exe` after it is installed and restarted.
+Studio can send an exported SVG to VectorCraft for direct vector editing. Install
+VectorCraft from its [official releases](https://github.com/storytold/vectorcraft/releases/latest),
+then set the executable under **Settings → VectorCraft executable** if Studio does
+not find it automatically. In the Figure tab, choose **Edit in VectorCraft…**,
+save the SVG, edit and save it in VectorCraft, then return to Studio and choose
+**Reload Edited SVG**. VectorCraft is optional; native SVG preview and Perple_X
+calculations do not depend on it.
 
 ## Download and install Studio
 
@@ -129,13 +132,13 @@ accidentally overwrite an earlier project.
    then choose a database and
    `perplex_option.dat`.
 3. Choose a calculation mode.
-   - Mode 1: `CONVEX -> PSVDRAW -> PNG`
+   - Mode 1: `CONVEX -> PSVDRAW -> SVG vector preview`
    - Mode 2: `VERTEX -> PSSECT -> PNG`
 4. For mode 2, select all thermodynamic components and give every selected
    component a positive bulk amount. Relative values do not need normalising.
 5. Set the P-T range. Studio defaults to `T(K)` on X and `P(bar)` on Y.
 6. Click **Create .dat Project**, then **Run Perple_X Calculation**.
-7. Review the console and figure preview; use **Save Figure As** to keep a PNG.
+7. Review the console and vector figure preview; use **Save Figure As** to save SVG, PNG, or the original PostScript output.
 
 Studio creates a separate project directory for each new project, for example:
 
@@ -157,7 +160,6 @@ creating invalid Perple_X input.
 | Problem | What to check |
 | --- | --- |
 | Invalid Perple_X installation | Select the root folder, not `bin`; confirm the executable, `datafiles`, and `optionfiles` folders exist. |
-| Ghostscript not found | Install 64-bit Ghostscript and restart Studio. |
 | VERTEX says all components must be constrained | In mode 2, enter a positive bulk amount for every selected component. |
 | Figure has one field or colour | Check bulk composition, P-T range, database, and solution models. A successful calculation can contain one stable assemblage. |
 | Perple_X reports an error but exit code is 0 | Read Studio's console. Some Perple_X programs return code 0 after writing `**error`. |

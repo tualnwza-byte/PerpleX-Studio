@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="799.999" height="799.999" viewBox="0 0 799.999 799.999">
+  <title>my_project_figure.svg</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <g>
+      <path d="M0 0 L799.999 0 L799.999 799.999 L0 799.999 Z" fill="#ffffff" fill-rule="evenodd"/>
+      <path d="M158.144 623.999 L161.744 613.199 L165.344 602.399 L168.944 591.599 L172.544 580.799 L176.144 570 L179.744 559.2 L183.344 548.4 L186.944 537.6 L190.544 526.8 L194.144 516 L197.888 505.2 L201.488 494.4 L205.088 483.6 L208.688 472.8 L212.432 462 L216.032 451.2 L219.632 440.4 L223.376 429.6 L226.976 418.8 L230.576 408 L234.32 397.2 L237.92 386.4 L239.792 381.072 L240.8 378.336" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <text transform="matrix(0.319 0.948 -0.948 0.319 195.2 522.4)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="8.401" fill="#000000"><tspan x="0" y="0">ky = and</tspan></text>
+      <path d="M240.8 378.336 L242.816 367.536 L244.976 356.736 L247.136 345.936 L249.152 335.136 L251.312 324.336 L253.472 313.536 L255.488 302.736 L257.648 291.936 L259.664 281.136 L261.824 270.336 L263.984 259.536 L266 248.736 L268.16 237.936 L270.176 227.136 L272.336 216.336 L274.352 205.536 L276.512 194.736 L276.944 192" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <text transform="matrix(0.191 0.982 -0.982 0.191 258.4 300)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="8.397" fill="#000000"><tspan x="0" y="0">ky = sill</tspan></text>
+      <path d="M240.8 378.336 L243.68 389.136 L246.56 399.936 L249.584 410.736 L252.464 421.536 L255.488 432.336 L258.512 443.136 L261.536 453.936 L264.56 464.736 L267.584 475.536 L270.608 486.336 L273.776 497.136 L276.944 507.936 L279.968 518.736 L283.136 529.536 L286.304 540.336 L289.616 551.136 L292.784 561.936 L295.952 572.736 L299.264 583.535 L302.576 594.335 L305.888 605.135 L309.2 615.935 L311.648 623.999" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <text transform="matrix(0.276 -0.961 0.961 0.276 265.6 477.6)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="8.401" fill="#000000"><tspan x="0" y="0">and = sill</tspan></text>
+      <path d="M109.328 623.999 L108.176 613.199 L107.168 602.399 L106.16 591.599 L105.008 580.799 L104 570 L104 568.704" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <path d="M109.904 591.599 C109.904 589.134 108.228 587.135 106.16 587.135 C104.092 587.135 102.416 589.134 102.416 591.599 C102.416 594.065 104.092 596.063 106.16 596.063 C108.228 596.063 109.904 594.065 109.904 591.599 Z" fill="#000000" fill-rule="evenodd"/>
+      <text transform="matrix(1 0 0 1 96.8 588.799)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="8.4" fill="#000000"><tspan x="0" y="0">4</tspan></text>
+      <path d="M508.928 623.999 L510.368 613.199 L511.808 602.399 L513.104 591.599 L514.544 580.799 L515.984 570 L517.28 559.2 L518.72 548.4 L520.016 537.6 L521.456 526.8 L522.752 516 L524.048 505.2 L525.488 494.4 L526.784 483.6 L528.08 472.8 L529.52 462 L530.816 451.2 L532.112 440.4 L533.408 429.6 L534.704 418.8 L536 409.296" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <text transform="matrix(0.125 0.992 -0.992 0.125 522.4 540.8)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="8.398" fill="#000000"><tspan x="0" y="0">sill = sil8L</tspan></text>
+      <path d="M443.84 623.999 L453.488 613.199 L463.136 602.399 L473.072 591.599 L474.368 590.303" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <path d="M466.88 602.399 C466.88 599.934 465.203 597.935 463.136 597.935 C461.068 597.935 459.392 599.934 459.392 602.399 C459.392 604.865 461.068 606.863 463.136 606.863 C465.203 606.863 466.88 604.865 466.88 602.399 Z" fill="#000000" fill-rule="evenodd"/>
+      <text transform="matrix(1 0 0 1 453.6 599.199)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="8.4" fill="#000000"><tspan x="0" y="0">6</tspan></text>
+      <path d="M474.368 590.303 L480.272 579.504 L486.176 568.704 L492.08 557.904 L498.128 547.104 L504.176 536.304 L510.224 525.504 L516.416 514.704 L522.608 503.904 L524.192 501.168 L524.48 500.448 L524.768 500.016" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <text transform="matrix(0.486 0.874 -0.874 0.486 492 563.2)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="8.393" fill="#000000"><tspan x="0" y="0">q = crst</tspan></text>
+      <path d="M474.368 590.303 L484.16 601.103 L493.952 611.903 L503.6 622.703 L504.896 623.999" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <path d="M497.696 611.903 C497.696 609.438 496.019 607.439 493.952 607.439 C491.884 607.439 490.208 609.438 490.208 611.903 C490.208 614.369 491.884 616.367 493.952 616.367 C496.019 616.367 497.696 614.369 497.696 611.903 Z" fill="#000000" fill-rule="evenodd"/>
+      <text transform="matrix(1 0 0 1 484.8 608.799)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="8.4" fill="#000000"><tspan x="0" y="0">8</tspan></text>
+      <path d="M524.768 500.016 L526.064 489.216 L527.504 478.416 L528.8 467.616 L530.096 456.816 L531.392 446.016 L532.832 435.216 L534.128 424.416 L535.424 413.616 L536 409.296" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <path d="M524.768 500.016 L530.96 489.216 L536 480.864" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <path d="M524.768 500.016 L523.472 510.816 L522.032 521.616 L520.736 532.416 L519.296 543.216 L518 554.016 L516.56 564.816 L515.264 575.616 L513.824 586.415 L512.384 597.215 L511.088 608.015 L509.648 618.815 L508.928 623.999" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <path d="M504.896 623.999 L495.248 613.199 L485.456 602.399 L475.664 591.599 L474.368 590.303" fill="none" stroke="#000000" stroke-width="0.288"/>
+      <path d="M244.688 378.336 C244.688 376.188 242.947 374.448 240.8 374.448 C238.653 374.448 236.912 376.188 236.912 378.336 C236.912 380.483 238.653 382.224 240.8 382.224 C242.947 382.224 244.688 380.483 244.688 378.336 Z" fill="#000000" fill-rule="evenodd"/>
+      <text transform="matrix(1 0 0 1 244 376)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="7.56" fill="#000000"><tspan x="0" y="0">(1)</tspan></text>
+      <path d="M478.256 590.303 C478.256 588.156 476.515 586.415 474.368 586.415 C472.22 586.415 470.48 588.156 470.48 590.303 C470.48 592.451 472.22 594.191 474.368 594.191 C476.515 594.191 478.256 592.451 478.256 590.303 Z" fill="#000000" fill-rule="evenodd"/>
+      <text transform="matrix(1 0 0 1 477.6 587.999)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="7.56" fill="#000000"><tspan x="0" y="0">(2)</tspan></text>
+      <path d="M528.656 500.016 C528.656 497.868 526.915 496.128 524.768 496.128 C522.62 496.128 520.88 497.868 520.88 500.016 C520.88 502.163 522.62 503.904 524.768 503.904 C526.915 503.904 528.656 502.163 528.656 500.016 Z" fill="#000000" fill-rule="evenodd"/>
+      <text transform="matrix(1 0 0 1 528 497.6)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="7.56" fill="#000000"><tspan x="0" y="0">(3)</tspan></text>
+      <text transform="matrix(1 0 0 1 43.04 66.4)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="13.44" fill="#000000"><tspan x="0" y="0">my_project</tspan></text>
+      <text transform="matrix(1 0 0 1 43.04 96)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="13.44" fill="#000000"><tspan x="0" y="0">Reaction equations are written with the high T(K) assemblage to the right of the = sign</tspan></text>
+      <path d="M104 623.999 L104 192 L536 192 L536 623.999 Z" fill="none" stroke="#000000" stroke-width="0.144"/>
+    </g>
+    <path d="M276.944 192 L104 192 L104 623.999 L158.144 623.999 L240.8 378.336 Z" fill="#888bff" stroke="#1a1a1a" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 124.572 378.336)" x="43.933" y="12" xml:space="preserve" font-family="&apos;Source Sans 3&apos;" font-size="12" fill="#1a1a1a" text-anchor="middle"><tspan x="43.933" y="12">Kyanite</tspan></text>
+    <path d="M240.8 378.336 L311.648 623.999 L158.144 623.999 Z" fill="#ffa291" stroke="#1a1a1a" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 192.978 535.294)" x="43.933" y="12" xml:space="preserve" font-family="&apos;Source Sans 3&apos;" font-size="12" fill="#1a1a1a" text-anchor="middle"><tspan x="43.933" y="12">Andalusite</tspan></text>
+    <text transform="matrix(1 0 0 1 371.525 409.296)" x="43.933" y="12" xml:space="preserve" font-family="&apos;Source Sans 3&apos;" font-size="12" fill="#1a1a1a" text-anchor="middle"><tspan x="43.933" y="12">Silimanite</tspan></text>
+    <path d="M276.944 192 L536 192 L536 409.296 L524.192 501.168 L474.368 590.303 L443.84 623.999 L311.648 623.999 L240.8 378.336 Z" fill="#f9ff88" stroke="#1a1a1a" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 344.466 390.926)" x="43.933" y="12" xml:space="preserve" font-family="&apos;Source Sans 3&apos;" font-size="12" fill="#1a1a1a" text-anchor="middle"><tspan x="43.933" y="12">Silimanite</tspan></text>
+  </g>
+</svg>
