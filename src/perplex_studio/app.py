@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from shutil import copy2
+from shutil import copy2, which
 from tempfile import gettempdir
 
 from perplex_studio.build_config import (
@@ -20,10 +23,10 @@ from perplex_studio.perplex_installation import PerpleXInstallation
 from perplex_studio.runner import (
     StagedProject,
     calculation_type,
-    find_ghostscript,
     stage_project,
 )
 from perplex_studio.shortcut import create_desktop_shortcut
+from perplex_studio.vector_figure import convert_postscript_to_svg
 
 
 def studio_icon_path() -> Path:
@@ -34,8 +37,9 @@ def studio_icon_path() -> Path:
 def main() -> None:
     """Start the PerpleX Studio desktop application."""
     try:
-        from PySide6.QtCore import QEvent, QLocale, QProcess, QSettings, Qt
-        from PySide6.QtGui import QIcon, QPixmap
+        from PySide6.QtCore import QEvent, QLocale, QProcess, QSettings, Qt, QRectF, QSize
+        from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap
+        from PySide6.QtSvg import QSvgGenerator, QSvgRenderer
         from PySide6.QtWidgets import (
             QApplication,
             QFileDialog,
@@ -51,6 +55,7 @@ def main() -> None:
             QLineEdit,
             QListWidget,
             QListWidgetItem,
+            QInputDialog,
             QMainWindow,
             QMessageBox,
             QPushButton,
@@ -58,8 +63,11 @@ def main() -> None:
             QTableWidget,
             QTableWidgetItem,
             QScrollArea,
+            QSpinBox,
+            QSplitter,
             QStatusBar,
             QTabWidget,
+            QToolButton,
             QVBoxLayout,
             QWidget,
         )
@@ -77,12 +85,16 @@ def main() -> None:
             self._space_pressed = False
             self._panning = False
             self._last_pan_position = None
+            self._annotation_click_callback: object | None = None
             self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             QApplication.instance().installEventFilter(self)
 
         def setWidget(self, widget: QWidget) -> None:  # type: ignore[override]
             super().setWidget(widget)
             widget.installEventFilter(self)
+
+        def set_annotation_click_callback(self, callback: object) -> None:
+            self._annotation_click_callback = callback
 
         def eventFilter(self, watched: object, event: object) -> bool:  # type: ignore[override]
             event_type = event.type()
@@ -99,6 +111,14 @@ def main() -> None:
                     return True
 
             if watched is self.widget():
+                if (
+                    event_type == QEvent.Type.MouseButtonPress
+                    and not self._space_pressed
+                    and event.button() == Qt.MouseButton.LeftButton
+                    and callable(self._annotation_click_callback)
+                ):
+                    if self._annotation_click_callback(event.position().toPoint()):
+                        return True
                 if (
                     event_type == QEvent.Type.MouseButtonPress
                     and self._space_pressed
@@ -121,6 +141,117 @@ def main() -> None:
                     self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
                     return True
             return super().eventFilter(watched, event)
+
+    class VectorFigureWidget(QWidget):
+        """Paint the Perple_X SVG directly; never flatten the working preview to pixels."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._renderer = QSvgRenderer(self)
+            self._overlay_callback: object | None = None
+            self._reaction_equations: list[tuple[int, str]] = []
+            self._legend_lines: list[tuple[str, str]] = []
+            self._message = "The generated vector diagram will appear here."
+            self.setMinimumSize(1, 1)
+            self.setStyleSheet("background: white;")
+
+        @property
+        def natural_height(self) -> int:
+            return 800 if not self._legend_lines else 902 + 20 * (len(self._legend_lines) - 1)
+
+        def set_reaction_equations(self, equations: list[tuple[int, str]]) -> None:
+            """Show the equations Perple_X used for numbered univariant lines."""
+            self._reaction_equations = equations
+            self._legend_lines = []
+            font = QFont("Segoe UI", 12)
+            metrics = QFontMetrics(font)
+            available = 720
+            for number, equation in equations:
+                words = equation.split()
+                lines: list[str] = []
+                current = ""
+                for word in words:
+                    candidate = f"{current} {word}".strip()
+                    if current and metrics.horizontalAdvance(candidate) > available:
+                        lines.append(current)
+                        current = word
+                    else:
+                        current = candidate
+                if current:
+                    lines.append(current)
+                for index, line in enumerate(lines or [equation]):
+                    self._legend_lines.append((str(number) if index == 0 else "", line))
+            self.updateGeometry()
+            self.update()
+
+        def set_svg_file(self, filename: str | Path) -> bool:
+            loaded = self._renderer.load(str(filename))
+            self._message = "" if loaded else f"Could not open vector diagram: {filename}"
+            self.update()
+            return loaded
+
+        def set_overlay_callback(self, callback: object) -> None:
+            self._overlay_callback = callback
+
+        def setText(self, text: str) -> None:
+            self._message = text
+            self.update()
+
+        def clear(self) -> None:
+            self._renderer = QSvgRenderer(self)
+            self._message = ""
+            self.update()
+
+        def paintEvent(self, _event: object) -> None:
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), QColor("white"))
+            if self._renderer.isValid():
+                self.render_vector(painter, QRectF(self.rect()))
+            elif self._message:
+                painter.setPen(QColor("#52606d"))
+                painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._message)
+            painter.end()
+
+        def render_vector(self, painter: QPainter, target: QRectF) -> None:
+            """Render source vectors and Studio overlays into any vector-capable painter."""
+            if not self._renderer.isValid():
+                return
+            scale = target.width() / 800 if target.width() else 1
+            diagram_target = QRectF(target.x(), target.y(), target.width(), 800 * scale)
+            painter.fillRect(target, QColor("white"))
+            self._renderer.render(painter, diagram_target)
+            if callable(self._overlay_callback):
+                painter.save()
+                painter.translate(diagram_target.x(), diagram_target.y())
+                painter.scale(scale, scale)
+                self._overlay_callback(painter)
+                painter.restore()
+            if self._legend_lines:
+                painter.save()
+                painter.translate(target.x(), target.y())
+                painter.scale(scale, scale)
+                painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+                painter.setPen(QPen(QColor("#334155"), 1))
+                painter.drawLine(24, 816, 776, 816)
+                heading_font = QFont("Segoe UI", 14)
+                heading_font.setBold(True)
+                painter.setFont(heading_font)
+                painter.setPen(QColor("#2e1065"))
+                painter.drawText(24, 840, "Univariant reactions (numbers match the diagram)")
+                painter.setFont(QFont("Segoe UI", 10))
+                painter.setPen(QColor("#64748b"))
+                painter.drawText(24, 858, "Perple_X places the high-temperature assemblage to the right of =.")
+                painter.setFont(QFont("Segoe UI", 11))
+                painter.setPen(QColor("#1f2937"))
+                y = 882
+                for number, equation in self._legend_lines:
+                    if number:
+                        painter.setPen(QColor("#5b21b6"))
+                        painter.drawText(28, y, 32, 18, Qt.AlignmentFlag.AlignLeft, number)
+                    painter.setPen(QColor("#1f2937"))
+                    painter.drawText(68, y, equation)
+                    y += 20
+                painter.restore()
 
     class BuildEditor(QWidget):
         """Input editor for the initial, data-driven BUILD workflow."""
@@ -257,12 +388,19 @@ def main() -> None:
             self.set_default_button.clicked.connect(self._save_as_default)
 
             root = QVBoxLayout(self)
+            root.setContentsMargins(10, 10, 10, 10)
             header = QLabel(
-                "BUILD input editor — selections are saved as a Studio setup. "
-                "Only verified project definitions should be run with Perple_X."
+                "BUILD configuration — set up a project, then create its Perple_X definition."
             )
+            header.setObjectName("panelDescription")
             header.setWordWrap(True)
             root.addWidget(header)
+            self.configuration_tabs = QTabWidget()
+            root.addWidget(self.configuration_tabs, 1)
+
+            project_page = QWidget()
+            project_layout = QVBoxLayout(project_page)
+            project_layout.setContentsMargins(8, 10, 8, 8)
             identity = QFormLayout()
             identity.addRow("Project/file name", self.project_name)
             directory_row = QWidget()
@@ -280,9 +418,14 @@ def main() -> None:
             identity.addRow("Computational option file", self.option_menu)
             identity.addRow("Specify components mode", self.component_mode)
             identity.addRow("Calculation title", self.title)
-            root.addWidget(self._box("Project", identity))
-            root.addWidget(self.transform)
+            project_layout.addWidget(self._box("Project", identity))
+            project_layout.addWidget(self.transform)
+            project_layout.addStretch()
+            self.configuration_tabs.addTab(project_page, "Project")
 
+            composition_page = QWidget()
+            composition_layout = QVBoxLayout(composition_page)
+            composition_layout.setContentsMargins(8, 10, 8, 8)
             fluid = QGridLayout()
             fluid.addWidget(self.saturated_fluid, 0, 0, 1, 2)
             fluid.addWidget(self.h2o, 1, 0)
@@ -292,9 +435,9 @@ def main() -> None:
             fluid.addWidget(self.saturated_components, 4, 0, 1, 2)
             fluid.addWidget(QLabel("Saturated fluid EoS"), 5, 0)
             fluid.addWidget(self.fluid_eos, 5, 1)
-            root.addWidget(self._box("Saturated fluid", fluid))
+            composition_layout.addWidget(self._box("Saturated fluid", fluid))
 
-            root.addWidget(self.independent_potentials)
+            composition_layout.addWidget(self.independent_potentials)
             components = QVBoxLayout()
             components.addWidget(QLabel("Select thermodynamic components from the selected database"))
             components.addWidget(self.components)
@@ -305,8 +448,13 @@ def main() -> None:
             ))
             bulk_amounts_layout.addWidget(self.component_amount_table)
             components.addWidget(self.bulk_amounts_box)
-            root.addWidget(self._box("Thermodynamic components", components))
+            composition_layout.addWidget(self._box("Thermodynamic components", components))
+            composition_layout.addStretch()
+            self.configuration_tabs.addTab(composition_page, "Components")
 
+            diagram_page = QWidget()
+            diagram_layout = QVBoxLayout(diagram_page)
+            diagram_layout.setContentsMargins(8, 10, 8, 8)
             axes = QGridLayout()
             axes.addWidget(self.geothermal_gradient, 0, 0, 1, 4)
             axes.addWidget(QLabel("Diagram type"), 1, 0)
@@ -324,8 +472,13 @@ def main() -> None:
             axes.addWidget(QLabel("Sectioning variable / value"), 4, 0)
             axes.addWidget(self.section_variable, 4, 1)
             axes.addWidget(self.section_value, 4, 3)
-            root.addWidget(self._box("Independent variables", axes))
+            diagram_layout.addWidget(self._box("Independent variables", axes))
+            diagram_layout.addStretch()
+            self.configuration_tabs.addTab(diagram_page, "Diagram")
 
+            phases_page = QWidget()
+            phases_layout = QVBoxLayout(phases_page)
+            phases_layout.setContentsMargins(8, 10, 8, 8)
             choices = QVBoxLayout()
             choices.addWidget(self.print_file)
             choices.addWidget(self.exclude_phases)
@@ -338,7 +491,9 @@ def main() -> None:
             choices.addLayout(phase_actions)
             choices.addWidget(self.phase_exclusions)
             choices.addWidget(self.solution_models)
-            root.addWidget(self._box("Phases and models", choices))
+            phases_layout.addWidget(self._box("Phases and models", choices))
+            phases_layout.addStretch()
+            self.configuration_tabs.addTab(phases_page, "Phases")
             actions = QHBoxLayout()
             actions.addWidget(self.create_dat_button)
             actions.addWidget(self.save_button)
@@ -346,7 +501,6 @@ def main() -> None:
             actions.addWidget(self.set_default_button)
             actions.addStretch()
             root.addLayout(actions)
-            root.addStretch()
 
             self.saturated_fluid.toggled.connect(self._set_fluid_enabled)
             self.database_menu.currentIndexChanged.connect(lambda _index: self._load_database())
@@ -825,10 +979,9 @@ def main() -> None:
             self.project_folder_edit = QLineEdit(
                 self._settings.value("default_project_directory", str(Path.cwd()), type=str)
             )
-            configured_ghostscript = self._settings.value("ghostscript_path", "", type=str)
-            detected_ghostscript = find_ghostscript()
-            self.ghostscript_edit = QLineEdit(
-                configured_ghostscript or (str(detected_ghostscript) if detected_ghostscript else "")
+            detected_vectorcraft = which("vectorcraft.exe") or which("vectorcraft") or ""
+            self.vectorcraft_edit = QLineEdit(
+                self._settings.value("vectorcraft_executable", detected_vectorcraft, type=str)
             )
             self.shortcut_option = QCheckBox("Enable the optional desktop shortcut")
             self.shortcut_option.setChecked(
@@ -868,8 +1021,8 @@ def main() -> None:
             paths.addRow("Default projects folder", self._path_row(
                 self.project_folder_edit, "Select default projects folder", True
             ))
-            paths.addRow("Ghostscript executable", self._path_row(
-                self.ghostscript_edit, "Select gswin64c.exe", False
+            paths.addRow("VectorCraft executable (optional)", self._path_row(
+                self.vectorcraft_edit, "Select VectorCraft", False
             ))
             root.addWidget(self._box("Paths and tools", paths))
 
@@ -937,13 +1090,15 @@ def main() -> None:
             if not project_folder.is_dir():
                 QMessageBox.warning(self, "Invalid projects folder", "Choose an existing default projects folder.")
                 return
-            ghostscript_value = self.ghostscript_edit.text().strip()
-            if ghostscript_value and not Path(ghostscript_value).is_file():
-                QMessageBox.warning(self, "Invalid Ghostscript", "Choose the gswin64c.exe executable or clear this field.")
+            vectorcraft_path = self.vectorcraft_edit.text().strip()
+            if vectorcraft_path and not Path(vectorcraft_path).is_file():
+                QMessageBox.warning(
+                    self, "VectorCraft not found", "Choose the VectorCraft executable or clear the field."
+                )
                 return
             self._settings.setValue("installation_path", self.installation_edit.text().strip())
             self._settings.setValue("default_project_directory", str(project_folder))
-            self._settings.setValue("ghostscript_path", ghostscript_value)
+            self._settings.setValue("vectorcraft_executable", vectorcraft_path)
             if callable(self._apply_callback):
                 self._apply_callback(self.installation_edit.text().strip(), str(project_folder))
             QMessageBox.information(self, "Settings saved", "Studio preferences were saved.")
@@ -964,7 +1119,7 @@ def main() -> None:
             self._settings.clear()
             self.installation_edit.clear()
             self.project_folder_edit.setText(str(Path.cwd()))
-            self.ghostscript_edit.setText(str(find_ghostscript() or ""))
+            self.vectorcraft_edit.setText(which("vectorcraft.exe") or which("vectorcraft") or "")
             self.shortcut_option.setChecked(True)
             if callable(self._apply_callback):
                 self._apply_callback("", str(Path.cwd()))
@@ -978,7 +1133,8 @@ def main() -> None:
             self.setWindowTitle("PerpleX Studio")
             if studio_icon_path().is_file():
                 self.setWindowIcon(QIcon(str(studio_icon_path())))
-            self.resize(1080, 720)
+            self.resize(1360, 820)
+            self.setMinimumSize(1040, 680)
             self.setStyleSheet(
                 """
                 QMainWindow { background: #ffffff; color: #1f1b2d; }
@@ -991,6 +1147,12 @@ def main() -> None:
                     background: #ffffff; border: 1px solid #ddd6fe; border-radius: 10px;
                     top: -1px;
                 }
+                QSplitter::handle { background: #ddd6fe; width: 3px; }
+                QLabel#workspaceTitle {
+                    background: #f5f3ff; color: #3b1b75; border: 1px solid #ddd6fe;
+                    border-radius: 8px; padding: 9px 12px; font-size: 15px; font-weight: 700;
+                }
+                QLabel#panelDescription { color: #5b5680; padding: 2px 3px 7px 3px; }
                 QTabBar::tab {
                     background: #f5f3ff; border: 1px solid #ddd6fe; border-bottom: none;
                     border-top-left-radius: 8px; border-top-right-radius: 8px;
@@ -1059,11 +1221,18 @@ def main() -> None:
             self._process: QProcess | None = None
             self._staged_project: StagedProject | None = None
             self._installation: PerpleXInstallation | None = None
-            self._ghostscript: Path | None = None
             self._stage = ""
+            self._stage_output = ""
             self._stage_had_perplex_error = False
-            self._figure_pixmap: QPixmap | None = None
+            self._base_svg_path: Path | None = None
+            self._vectorcraft_svg_path: Path | None = None
+            self._figure_size = 800
             self._zoom_factor = 1.0
+            self._phase_regions: list[dict[str, object]] = []
+            self._draft_region: list[tuple[int, int]] = []
+            self._drawing_phase_region = False
+            self._placing_text_box = False
+            self._text_annotations: list[dict[str, object]] = []
 
             self.installation_edit = QLineEdit(
                 self._settings.value("installation_path", "", type=str)
@@ -1074,6 +1243,12 @@ def main() -> None:
             self.save_figure_button = QPushButton("Save Figure As…")
             self.save_figure_button.setEnabled(False)
             self.save_figure_button.clicked.connect(self._save_figure_as)
+            self.open_vectorcraft_button = QPushButton("Edit in VectorCraft…")
+            self.open_vectorcraft_button.setEnabled(False)
+            self.open_vectorcraft_button.clicked.connect(self._open_in_vectorcraft)
+            self.reload_vectorcraft_button = QPushButton("Reload Edited SVG")
+            self.reload_vectorcraft_button.setEnabled(False)
+            self.reload_vectorcraft_button.clicked.connect(self._reload_vectorcraft_svg)
             self.zoom_out_button = QPushButton("Zoom Out")
             self.zoom_out_button.clicked.connect(lambda: self._change_zoom(0.8))
             self.zoom_in_button = QPushButton("Zoom In")
@@ -1085,13 +1260,13 @@ def main() -> None:
             self.log = QPlainTextEdit()
             self.log.setReadOnly(True)
             self.log.setPlaceholderText("Perple_X console output will appear here.")
-            self.figure = QLabel("The generated pseudosection preview will appear here.")
-            self.figure.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.figure.setStyleSheet("QLabel { background: white; color: #52606d; }")
+            self.figure = VectorFigureWidget()
+            self.figure.set_overlay_callback(self._paint_figure_overlays)
             self.figure_scroll = FigurePreviewScrollArea()
             self.figure_scroll.setStyleSheet("QScrollArea { background: white; border: 1px solid #d9e2ec; }")
             self.figure_scroll.setBackgroundRole(self.figure.backgroundRole())
             self.figure_scroll.setWidget(self.figure)
+            self.figure_scroll.set_annotation_click_callback(self._add_phase_region_vertex)
             self.figure_scroll.setWidgetResizable(False)
             self.figure_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
             self.build_editor = BuildEditor(self.installation_edit, self._use_created_project)
@@ -1102,38 +1277,297 @@ def main() -> None:
             form.addRow("Perple_X installation", self._path_row(self.installation_edit, self._choose_installation))
             form.addRow("Project definition (.dat)", self._path_row(self.project_edit, self._choose_project))
 
-            layout = QVBoxLayout()
-            layout.addLayout(form)
+            figure_layout = QVBoxLayout()
+            figure_layout.setContentsMargins(10, 10, 10, 10)
+            figure_layout.addLayout(form)
             actions = QHBoxLayout()
             actions.addWidget(self.run_button)
             actions.addWidget(self.save_figure_button)
+            actions.addWidget(self.open_vectorcraft_button)
+            actions.addWidget(self.reload_vectorcraft_button)
             actions.addStretch()
-            layout.addLayout(actions)
-            layout.addWidget(QLabel("Console"))
-            layout.addWidget(self.log, 1)
+            figure_layout.addLayout(actions)
             figure_header = QHBoxLayout()
-            figure_header.addWidget(QLabel("Figure preview — hold Space and drag to pan"))
+            figure_header.addWidget(QLabel("Native vector preview (SVG) — hold Space and drag to pan"))
             figure_header.addStretch()
             figure_header.addWidget(self.zoom_out_button)
             figure_header.addWidget(self.zoom_in_button)
             figure_header.addWidget(self.reset_zoom_button)
-            layout.addLayout(figure_header)
-            layout.addWidget(self.figure_scroll, 2)
-            run_page = QWidget()
-            run_page.setLayout(layout)
-            run_scroll = QScrollArea()
-            run_scroll.setWidget(run_page)
-            run_scroll.setWidgetResizable(True)
-            run_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            figure_layout.addLayout(figure_header)
+            drawing_toolbar = QWidget()
+            drawing_toolbar.setObjectName("drawingToolbar")
+            drawing_toolbar.setFixedWidth(102)
+            drawing_tools = QVBoxLayout(drawing_toolbar)
+            drawing_tools.setContentsMargins(6, 8, 6, 8)
+            drawing_tools.setSpacing(8)
+            drawing_label = QLabel("DRAW")
+            drawing_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            drawing_label.setStyleSheet("font-weight: 700; color: #5b21b6;")
+            drawing_tools.addWidget(drawing_label)
+            self.select_figure_tool_button = QToolButton()
+            self.select_figure_tool_button.setText("↖\nSelect")
+            self.select_figure_tool_button.setToolTip("Return to figure selection mode")
+            self.start_phase_region_button = QToolButton()
+            self.start_phase_region_button.setText("⬠\nRegion")
+            self.start_phase_region_button.setToolTip("Draw a colored phase region on the figure")
+            self.start_phase_region_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            self.text_box_tool_button = QToolButton()
+            self.text_box_tool_button.setText("T\nText Box")
+            self.text_box_tool_button.setToolTip("Place a free text box on the figure")
+            self.finish_phase_region_button = QToolButton()
+            self.finish_phase_region_button.setText("✓\nFinish")
+            self.finish_phase_region_button.setToolTip("Finish and label the current phase region")
+            self.cancel_phase_region_button = QToolButton()
+            self.cancel_phase_region_button.setText("×\nCancel")
+            self.cancel_phase_region_button.setToolTip("Cancel the current phase region")
+            self.undo_phase_vertex_button = QToolButton()
+            self.undo_phase_vertex_button.setText("↶\nUndo point")
+            self.undo_phase_vertex_button.setToolTip("Remove the last boundary point")
+            self.delete_phase_region_button = QToolButton()
+            self.delete_phase_region_button.setText("−\nDelete")
+            self.delete_phase_region_button.setToolTip("Delete the selected colored phase region")
+            self.open_modifier_tool_button = QToolButton()
+            self.open_modifier_tool_button.setText("⚙\nDiagram\nModifier")
+            self.open_modifier_tool_button.setToolTip("Open figure appearance, phase labels, and color settings")
+            for tool in (
+                self.select_figure_tool_button,
+                self.start_phase_region_button,
+                self.text_box_tool_button,
+                self.finish_phase_region_button,
+                self.undo_phase_vertex_button,
+                self.cancel_phase_region_button,
+                self.delete_phase_region_button,
+                self.open_modifier_tool_button,
+            ):
+                tool.setMinimumSize(84, 44)
+                tool.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+                drawing_tools.addWidget(tool)
+            self.open_modifier_tool_button.setMinimumHeight(62)
+            drawing_tools.addStretch()
+            drawing_toolbar.setStyleSheet(
+                "QWidget#drawingToolbar { background: #f7f5ff; border: 1px solid #ddd6fe; "
+                "border-radius: 8px; } QToolButton { color: #3b276a; background: white; "
+                "border: 1px solid #c4b5fd; border-radius: 6px; padding: 5px; font-weight: 600; } "
+                "QToolButton:hover { background: #ede9fe; border-color: #7c3aed; }"
+            )
+            self.start_phase_region_button.clicked.connect(self._start_phase_region)
+            self.text_box_tool_button.clicked.connect(self._start_text_box_tool)
+            self.select_figure_tool_button.clicked.connect(self._select_figure_tool)
+            self.finish_phase_region_button.clicked.connect(self._finish_phase_region)
+            self.cancel_phase_region_button.clicked.connect(self._cancel_phase_region)
+            self.undo_phase_vertex_button.clicked.connect(self._undo_phase_region_vertex)
+            self.delete_phase_region_button.clicked.connect(self._delete_phase_region)
+            self.open_modifier_tool_button.clicked.connect(self._open_diagram_modifier)
+            preview_row = QHBoxLayout()
+            preview_row.setSpacing(8)
+            preview_row.addWidget(drawing_toolbar)
+            preview_row.addWidget(self.figure_scroll, 1)
+            figure_layout.addLayout(preview_row, 1)
+            figure_page = QWidget()
+            figure_page.setLayout(figure_layout)
+
+            console_layout = QVBoxLayout()
+            console_layout.setContentsMargins(10, 10, 10, 10)
+            console_description = QLabel(
+                "Live Perple_X output and diagnostics for the active calculation."
+            )
+            console_description.setObjectName("panelDescription")
+            console_layout.addWidget(console_description)
+            console_layout.addWidget(self.log, 1)
+            console_page = QWidget()
+            console_page.setLayout(console_layout)
+
+            self.modifier_title = QLineEdit()
+            self.modifier_title.setPlaceholderText("Optional publication title")
+            self.modifier_path_color = QComboBox()
+            self.modifier_path_color.addItem("Purple", "#6d28d9")
+            self.modifier_path_color.addItem("Black", "#1f1b2d")
+            self.modifier_path_color.addItem("Red", "#dc2626")
+            self.modifier_path_color.addItem("Blue", "#2563eb")
+            self.modifier_path_width = self._modifier_number(2.0)
+            self.modifier_path_width.setRange(1.0, 12.0)
+            self.modifier_path_width.setSuffix(" px")
+            self.modifier_t_min = self._modifier_number(0.0)
+            self.modifier_t_max = self._modifier_number(1.0)
+            self.modifier_p_min = self._modifier_number(0.0)
+            self.modifier_p_max = self._modifier_number(1.0)
+            self.path_table = QTableWidget(0, 2)
+            self.path_table.setHorizontalHeaderLabels(("T (K)", "P (bar)"))
+            self.path_table.verticalHeader().setVisible(False)
+            self.path_table.setMaximumHeight(185)
+            self.path_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            self.add_path_point_button = QPushButton("Add P–T Point")
+            self.example_path_button = QPushButton("Insert Example Path")
+            self.remove_path_point_button = QPushButton("Remove Selected Point")
+            self.apply_diagram_button = QPushButton("Open Figure Preview")
+            self.reset_diagram_button = QPushButton("Reset Diagram Changes")
+            self.add_path_point_button.clicked.connect(self._add_path_point)
+            self.example_path_button.clicked.connect(self._insert_example_path)
+            self.remove_path_point_button.clicked.connect(self._remove_path_point)
+            self.apply_diagram_button.clicked.connect(self._apply_diagram_modifications)
+            self.reset_diagram_button.clicked.connect(self._reset_diagram_modifier)
+            self.modifier_title.textChanged.connect(self._refresh_diagram_preview)
+            self.modifier_path_color.currentIndexChanged.connect(self._refresh_diagram_preview)
+            self.modifier_path_width.valueChanged.connect(self._refresh_diagram_preview)
+            for field in (
+                self.modifier_t_min,
+                self.modifier_t_max,
+                self.modifier_p_min,
+                self.modifier_p_max,
+            ):
+                field.valueChanged.connect(self._refresh_diagram_preview)
+
+            modifier_layout = QVBoxLayout()
+            modifier_layout.setContentsMargins(10, 10, 10, 10)
+            modifier_layout.setSpacing(14)
+            modifier_intro = QLabel(
+                "The Perple_X drawing is rendered as vector geometry in Studio. Add editable "
+                "display-only annotations here; these changes never alter the calculation or "
+                "its stable assemblages."
+            )
+            modifier_intro.setObjectName("panelDescription")
+            modifier_intro.setWordWrap(True)
+            modifier_layout.addWidget(modifier_intro)
+            title_form = QFormLayout()
+            title_form.addRow("Figure title", self.modifier_title)
+            modifier_layout.addWidget(self._modifier_box("Figure appearance", title_form))
+            path_form = QFormLayout()
+            path_form.addRow("Path color", self.modifier_path_color)
+            path_form.addRow("Line width", self.modifier_path_width)
+            modifier_layout.addWidget(self._modifier_box("P–T path overlay", path_form))
+            modifier_layout.addWidget(QLabel("Path points"))
+            modifier_layout.addWidget(self.path_table)
+            path_actions = QHBoxLayout()
+            path_actions.addWidget(self.add_path_point_button)
+            path_actions.addWidget(self.example_path_button)
+            path_actions.addWidget(self.remove_path_point_button)
+            path_actions.addStretch()
+            modifier_layout.addLayout(path_actions)
+            axes_form = QGridLayout()
+            axes_form.addWidget(QLabel("T (K) min / max"), 0, 0)
+            axes_form.addWidget(self.modifier_t_min, 0, 1)
+            axes_form.addWidget(self.modifier_t_max, 0, 2)
+            axes_form.addWidget(QLabel("P (bar) min / max"), 1, 0)
+            axes_form.addWidget(self.modifier_p_min, 1, 1)
+            axes_form.addWidget(self.modifier_p_max, 1, 2)
+            modifier_layout.addWidget(self._modifier_box("Diagram axes for the overlay", axes_form))
+
+            self.phase_name = QLineEdit()
+            self.phase_name.setPlaceholderText("For example: Sillimanite")
+            self.phase_color = QComboBox()
+            for name, color in (
+                ("Lavender", "#b9b6d9"),
+                ("Apricot", "#fde0ba"),
+                ("Mint", "#b7e4c7"),
+                ("Sky blue", "#b8d8ee"),
+                ("Rose", "#f5c2c7"),
+                ("Yellow", "#f9e79f"),
+            ):
+                self.phase_color.addItem(name, color)
+            self.phase_opacity = QSpinBox()
+            self.phase_opacity.setRange(10, 90)
+            self.phase_opacity.setValue(55)
+            self.phase_opacity.setSuffix(" %")
+            self.phase_regions_table = QTableWidget(0, 2)
+            self.phase_regions_table.setHorizontalHeaderLabels(("Phase name", "Fill color"))
+            self.phase_regions_table.verticalHeader().setVisible(False)
+            self.phase_regions_table.setMaximumHeight(145)
+            self.phase_regions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            self.phase_regions_table.itemChanged.connect(self._update_phase_region_from_table)
+            self.text_boxes_table = QTableWidget(0, 2)
+            self.text_boxes_table.setHorizontalHeaderLabels(("Text box content", "Placed at (px)"))
+            self.text_boxes_table.verticalHeader().setVisible(False)
+            self.text_boxes_table.setMaximumHeight(150)
+            self.text_boxes_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            self.text_boxes_table.itemChanged.connect(self._update_text_box_from_table)
+            self.edit_text_box_button = QPushButton("Edit Selected Text Box…")
+            self.edit_text_box_button.clicked.connect(self._edit_selected_text_box)
+            self.remove_text_box_button = QPushButton("Remove Selected Text Box")
+            self.remove_text_box_button.clicked.connect(self._remove_selected_text_box)
+            phase_form = QFormLayout()
+            phase_form.addRow("Phase name", self.phase_name)
+            phase_form.addRow("Fill color", self.phase_color)
+            phase_form.addRow("Opacity", self.phase_opacity)
+            phase_box_layout = QVBoxLayout()
+            phase_box_layout.addLayout(phase_form)
+            phase_help = QLabel(
+                "Set the phase name and fill style here. In Figure, choose Region on the left "
+                "toolbar, click boundary points, then choose Finish. Phase names are kept in this "
+                "list; use Text Box to place visible labels anywhere."
+            )
+            phase_help.setWordWrap(True)
+            phase_help.setObjectName("panelDescription")
+            phase_box_layout.addWidget(phase_help)
+            phase_box_layout.addWidget(self.phase_regions_table)
+            modifier_layout.addWidget(self._modifier_box("Phase region colors", phase_box_layout))
+            text_box_layout = QVBoxLayout()
+            text_box_help = QLabel(
+                "Choose Text Box on the left toolbar and click the figure to place text. "
+                "Select an entry and choose Edit Selected Text Box to change its text."
+            )
+            text_box_help.setWordWrap(True)
+            text_box_help.setObjectName("panelDescription")
+            text_box_layout.addWidget(text_box_help)
+            text_box_layout.addWidget(self.text_boxes_table)
+            text_box_layout.addWidget(self.edit_text_box_button)
+            text_box_layout.addWidget(self.remove_text_box_button)
+            modifier_layout.addWidget(self._modifier_box("Text boxes", text_box_layout))
+            verification_note = QLabel(
+                "The overlay uses the standard PSSECT plot frame. Check path alignment before "
+                "using an exported figure in a publication."
+            )
+            verification_note.setWordWrap(True)
+            verification_note.setObjectName("panelDescription")
+            modifier_layout.addWidget(verification_note)
+            modifier_actions = QHBoxLayout()
+            modifier_actions.addWidget(self.apply_diagram_button)
+            modifier_actions.addWidget(self.reset_diagram_button)
+            modifier_actions.addStretch()
+            modifier_layout.addLayout(modifier_actions)
+            modifier_layout.addStretch()
+            modifier_page = QWidget()
+            modifier_page.setLayout(modifier_layout)
+            modifier_scroll = QScrollArea()
+            modifier_scroll.setWidget(modifier_page)
+            modifier_scroll.setWidgetResizable(True)
+            modifier_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            modifier_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.modifier_scroll = modifier_scroll
+
             build_scroll = QScrollArea()
             build_scroll.setWidget(self.build_editor)
             build_scroll.setWidgetResizable(True)
             build_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self.tabs = QTabWidget()
-            self.tabs.addTab(build_scroll, "Build Input")
-            self.tabs.addTab(run_scroll, "Run and Figure")
-            self.tabs.addTab(self.settings_page, "Settings")
-            self.setCentralWidget(self.tabs)
+            self.configuration_tabs = QTabWidget()
+            self.configuration_tabs.addTab(build_scroll, "BUILD Setup")
+            self.configuration_tabs.addTab(self.settings_page, "Settings")
+            self.result_tabs = QTabWidget()
+            self.result_tabs.addTab(figure_page, "Figure")
+            self.result_tabs.addTab(console_page, "Console")
+            self.result_tabs.addTab(modifier_scroll, "Diagram Modifier")
+
+            configuration_panel = QWidget()
+            configuration_layout = QVBoxLayout(configuration_panel)
+            configuration_layout.setContentsMargins(8, 8, 6, 8)
+            configuration_title = QLabel("Configuration")
+            configuration_title.setObjectName("workspaceTitle")
+            configuration_layout.addWidget(configuration_title)
+            configuration_layout.addWidget(self.configuration_tabs, 1)
+            results_panel = QWidget()
+            results_layout = QVBoxLayout(results_panel)
+            results_layout.setContentsMargins(6, 8, 8, 8)
+            results_title = QLabel("Results and visualization")
+            results_title.setObjectName("workspaceTitle")
+            results_layout.addWidget(results_title)
+            results_layout.addWidget(self.result_tabs, 1)
+            self.workspace = QSplitter(Qt.Orientation.Horizontal)
+            self.workspace.addWidget(configuration_panel)
+            self.workspace.addWidget(results_panel)
+            self.workspace.setChildrenCollapsible(False)
+            self.workspace.setStretchFactor(0, 0)
+            self.workspace.setStretchFactor(1, 1)
+            self.workspace.setSizes((460, 820))
+            self.setCentralWidget(self.workspace)
             self.setStatusBar(QStatusBar())
             self.statusBar().showMessage("Select a Perple_X installation and project definition.")
 
@@ -1147,6 +1581,441 @@ def main() -> None:
             layout.addWidget(button)
             return row
 
+        @staticmethod
+        def _modifier_number(value: float) -> QDoubleSpinBox:
+            field = QDoubleSpinBox()
+            field.setLocale(QLocale.c())
+            field.setRange(-1.0e12, 1.0e12)
+            field.setDecimals(4)
+            field.setValue(value)
+            return field
+
+        @staticmethod
+        def _modifier_box(title: str, layout: object) -> QGroupBox:
+            box = QGroupBox(title)
+            box.setLayout(layout)
+            return box
+
+        def _set_modifier_axes_from_project(self, project: str | Path) -> None:
+            """Load P-T limits from standard Perple_X project comments when available."""
+            try:
+                lines = Path(project).read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                return
+            values: dict[str, list[float]] = {}
+            for line in lines:
+                lowered = line.casefold()
+                if "max p, t" not in lowered and "min p, t" not in lowered:
+                    continue
+                numbers = [float(value) for value in re.findall(r"[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?", line)]
+                if len(numbers) >= 2:
+                    values["max" if "max p, t" in lowered else "min"] = numbers[:2]
+            if "min" in values and "max" in values:
+                self.modifier_p_min.setValue(values["min"][0])
+                self.modifier_p_max.setValue(values["max"][0])
+                self.modifier_t_min.setValue(values["min"][1])
+                self.modifier_t_max.setValue(values["max"][1])
+
+        def _add_path_point(self) -> None:
+            row = self.path_table.rowCount()
+            self.path_table.insertRow(row)
+            first = row == 0
+            temperature = self._modifier_number(
+                self.modifier_t_min.value() if first else self.modifier_t_max.value()
+            )
+            pressure = self._modifier_number(
+                self.modifier_p_min.value() if first else self.modifier_p_max.value()
+            )
+            self.path_table.setCellWidget(row, 0, temperature)
+            self.path_table.setCellWidget(row, 1, pressure)
+            temperature.valueChanged.connect(self._refresh_diagram_preview)
+            pressure.valueChanged.connect(self._refresh_diagram_preview)
+            self._refresh_diagram_preview()
+
+        def _insert_example_path(self) -> None:
+            """Insert a clearly visible path so users can verify the modifier is active."""
+            self.path_table.setRowCount(0)
+            t_range = self.modifier_t_max.value() - self.modifier_t_min.value()
+            p_range = self.modifier_p_max.value() - self.modifier_p_min.value()
+            if t_range <= 0 or p_range <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Set diagram axes first",
+                    "Choose a project with valid P–T limits before inserting an example path.",
+                )
+                return
+            for fraction in (0.25, 0.5, 0.75):
+                row = self.path_table.rowCount()
+                self.path_table.insertRow(row)
+                temperature = self._modifier_number(self.modifier_t_min.value() + t_range * fraction)
+                pressure = self._modifier_number(self.modifier_p_min.value() + p_range * fraction)
+                self.path_table.setCellWidget(row, 0, temperature)
+                self.path_table.setCellWidget(row, 1, pressure)
+                temperature.valueChanged.connect(self._refresh_diagram_preview)
+                pressure.valueChanged.connect(self._refresh_diagram_preview)
+            self._refresh_diagram_preview()
+
+        def _remove_path_point(self) -> None:
+            row = self.path_table.currentRow()
+            if row >= 0:
+                self.path_table.removeRow(row)
+                self._refresh_diagram_preview()
+
+        def _path_points(self) -> list[tuple[float, float]]:
+            points: list[tuple[float, float]] = []
+            for row in range(self.path_table.rowCount()):
+                temperature = self.path_table.cellWidget(row, 0)
+                pressure = self.path_table.cellWidget(row, 1)
+                if isinstance(temperature, QDoubleSpinBox) and isinstance(pressure, QDoubleSpinBox):
+                    points.append((temperature.value(), pressure.value()))
+            return points
+
+        def _start_phase_region(self) -> None:
+            if self._base_svg_path is None:
+                QMessageBox.information(
+                    self, "No figure yet", "Run a calculation before adding a colored phase region."
+                )
+                return
+            self._placing_text_box = False
+            self._drawing_phase_region = True
+            self._draft_region = []
+            self.figure.setCursor(Qt.CursorShape.CrossCursor)
+            self.result_tabs.setCurrentIndex(0)
+            self.statusBar().showMessage(
+                "Click boundary points in the Figure preview. Select Finish Region when done."
+            )
+
+        def _select_figure_tool(self) -> None:
+            self._drawing_phase_region = False
+            self._placing_text_box = False
+            self.figure.unsetCursor()
+            self._refresh_diagram_preview()
+            self.statusBar().showMessage("Selection mode. Choose Region to continue drawing.")
+
+        def _start_text_box_tool(self) -> None:
+            if self._base_svg_path is None:
+                QMessageBox.information(
+                    self, "No figure yet", "Run a calculation before adding a text box."
+                )
+                return
+            self._drawing_phase_region = False
+            self._placing_text_box = True
+            self.figure.setCursor(Qt.CursorShape.IBeamCursor)
+            self.result_tabs.setCurrentIndex(0)
+            self.statusBar().showMessage("Click the figure where the text box should begin.")
+
+        def _open_diagram_modifier(self) -> None:
+            self.result_tabs.setCurrentWidget(self.modifier_scroll)
+
+        def _update_phase_region_from_table(self, item: QTableWidgetItem) -> None:
+            """Apply inline edits to a phase-region name and redraw the preview."""
+            if item.column() != 0:
+                return
+            row = item.row()
+            if row < 0 or row >= len(self._phase_regions):
+                return
+            label = item.text().strip()
+            if not label:
+                label = str(self._phase_regions[row]["label"])
+                item.setText(label)
+                return
+            self._phase_regions[row]["label"] = label
+            self._refresh_diagram_preview()
+            self.statusBar().showMessage(f"Phase label updated: {label}")
+
+        def _update_text_box_from_table(self, item: QTableWidgetItem) -> None:
+            if item.column() != 0:
+                return
+            row = item.row()
+            if row < 0 or row >= len(self._text_annotations):
+                return
+            self._text_annotations[row]["text"] = item.text()
+            self._refresh_diagram_preview()
+
+        def _cancel_phase_region(self) -> None:
+            self._drawing_phase_region = False
+            self._placing_text_box = False
+            self._draft_region = []
+            self.figure.unsetCursor()
+            self._refresh_diagram_preview()
+            self.statusBar().showMessage("Phase-region drawing cancelled.")
+
+        def _undo_phase_region_vertex(self) -> None:
+            if not self._drawing_phase_region or not self._draft_region:
+                self.statusBar().showMessage("There is no boundary point to undo.")
+                return
+            self._draft_region.pop()
+            self._refresh_diagram_preview()
+            self.statusBar().showMessage(
+                f"Removed the last point. {len(self._draft_region)} boundary point(s) remain."
+            )
+
+        def _add_phase_region_vertex(self, position: object) -> bool:
+            if self._base_svg_path is None:
+                return False
+            x = round(position.x() / self._zoom_factor)
+            y = round(position.y() / self._zoom_factor)
+            x = max(0, min(self._figure_size - 1, x))
+            y = max(0, min(self._figure_size - 1, y))
+            if self._placing_text_box:
+                text, accepted = QInputDialog.getMultiLineText(
+                    self, "Add text box", "Enter the text to place on the figure:"
+                )
+                if accepted and text.strip():
+                    self._text_annotations.append({"text": text.strip(), "x": x, "y": y})
+                    row = self.text_boxes_table.rowCount()
+                    self.text_boxes_table.insertRow(row)
+                    text_item = QTableWidgetItem(text.strip())
+                    text_item.setFlags(text_item.flags() | Qt.ItemFlag.ItemIsEditable)
+                    self.text_boxes_table.setItem(row, 0, text_item)
+                    position_item = QTableWidgetItem(f"{x}, {y}")
+                    position_item.setFlags(position_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self.text_boxes_table.setItem(row, 1, position_item)
+                    self.statusBar().showMessage(
+                        "Text box added. Edit its text in the Diagram Modifier list."
+                    )
+                self._placing_text_box = False
+                self.figure.unsetCursor()
+                self._refresh_diagram_preview()
+                return True
+            if not self._drawing_phase_region:
+                return False
+            self._draft_region.append((x, y))
+            self._refresh_diagram_preview()
+            self.statusBar().showMessage(
+                f"Added boundary point {len(self._draft_region)}. Add more or select Finish Region."
+            )
+            return True
+
+        def _finish_phase_region(self) -> None:
+            if not self._drawing_phase_region:
+                QMessageBox.information(
+                    self, "Start a region", "Select Start Region before choosing boundary points.")
+                return
+            if len(self._draft_region) < 3:
+                QMessageBox.warning(
+                    self, "More points needed", "A phase region needs at least three boundary points.")
+                return
+            label = self.phase_name.text().strip() or f"Phase {len(self._phase_regions) + 1}"
+            region = {
+                "label": label,
+                "color": str(self.phase_color.currentData()),
+                "opacity": self.phase_opacity.value(),
+                "points": self._draft_region.copy(),
+            }
+            self._phase_regions.append(region)
+            row = self.phase_regions_table.rowCount()
+            self.phase_regions_table.insertRow(row)
+            self.phase_regions_table.setItem(row, 0, QTableWidgetItem(label))
+            color_item = QTableWidgetItem(self.phase_color.currentText())
+            color_item.setBackground(QColor(str(region["color"])))
+            self.phase_regions_table.setItem(row, 1, color_item)
+            self._drawing_phase_region = False
+            self._placing_text_box = False
+            self._draft_region = []
+            self.figure.unsetCursor()
+            self._refresh_diagram_preview()
+            self.statusBar().showMessage(f"Added colored region: {label}")
+
+        def _delete_phase_region(self) -> None:
+            row = self.phase_regions_table.currentRow()
+            if row < 0:
+                QMessageBox.information(
+                    self, "Select a region", "Select a phase region in the table to delete it.")
+                return
+            del self._phase_regions[row]
+            self.phase_regions_table.removeRow(row)
+            self._refresh_diagram_preview()
+            self.statusBar().showMessage("Selected phase region deleted.")
+
+        def _remove_selected_text_box(self) -> None:
+            row = self.text_boxes_table.currentRow()
+            if row < 0:
+                QMessageBox.information(
+                    self, "Select a text box", "Select a text box in the list to remove it."
+                )
+                return
+            del self._text_annotations[row]
+            self.text_boxes_table.removeRow(row)
+            self._refresh_diagram_preview()
+            self.statusBar().showMessage("Selected text box removed.")
+
+        def _edit_selected_text_box(self) -> None:
+            row = self.text_boxes_table.currentRow()
+            if row < 0 or row >= len(self._text_annotations):
+                QMessageBox.information(
+                    self, "Select a text box", "Select a text box in the list to edit it."
+                )
+                return
+            current_text = str(self._text_annotations[row]["text"])
+            edited_text, accepted = QInputDialog.getMultiLineText(
+                self, "Edit text box", "Update the figure text:", current_text
+            )
+            if accepted and edited_text.strip():
+                self._text_annotations[row]["text"] = edited_text.strip()
+                self.text_boxes_table.item(row, 0).setText(edited_text.strip())
+                self._refresh_diagram_preview()
+                self.statusBar().showMessage("Text box updated.")
+
+        def _draw_phase_regions(self, painter: QPainter) -> None:
+            """Paint user-created color/label layers in source-image pixel coordinates."""
+            for region in self._phase_regions:
+                points = region["points"]
+                if not isinstance(points, list) or len(points) < 3:
+                    continue
+                path = QPainterPath()
+                first_x, first_y = points[0]
+                path.moveTo(first_x, first_y)
+                for x, y in points[1:]:
+                    path.lineTo(x, y)
+                path.closeSubpath()
+                fill = QColor(str(region["color"]))
+                fill.setAlpha(int(region["opacity"]) * 255 // 100)
+                painter.setBrush(fill)
+                painter.setPen(QPen(QColor("#1f2937"), 1.5))
+                painter.drawPath(path)
+            if self._drawing_phase_region and self._draft_region:
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(QColor("#6d28d9"), 2, Qt.PenStyle.DashLine))
+                for start, end in zip(self._draft_region, self._draft_region[1:]):
+                    painter.drawLine(start[0], start[1], end[0], end[1])
+                painter.setBrush(QColor("#6d28d9"))
+                for x, y in self._draft_region:
+                    painter.drawEllipse(x - 4, y - 4, 8, 8)
+
+        def _draw_text_annotations(self, painter: QPainter) -> None:
+            font = QFont("Segoe UI", max(10, round(self._figure_size / 105)))
+            metrics = QFontMetrics(font)
+            painter.setFont(font)
+            for annotation in self._text_annotations:
+                text = str(annotation["text"])
+                x, y = int(annotation["x"]), int(annotation["y"])
+                max_text_width = 280
+                wrapped_lines: list[str] = []
+                for paragraph in text.splitlines() or [""]:
+                    current = ""
+                    for word in paragraph.split():
+                        candidate = f"{current} {word}".strip()
+                        if current and metrics.horizontalAdvance(candidate) > max_text_width:
+                            wrapped_lines.append(current)
+                            current = word
+                        else:
+                            current = candidate
+                    wrapped_lines.append(current)
+                box_width = max(100, min(max_text_width + 16, max(
+                    (metrics.horizontalAdvance(line) for line in wrapped_lines), default=0
+                ) + 16))
+                line_height = metrics.height()
+                box_height = max(line_height + 12, len(wrapped_lines) * line_height + 12)
+                painter.fillRect(x, y, box_width, box_height, QColor(255, 255, 255, 225))
+                painter.setPen(QPen(QColor("#4c1d95"), 1.5))
+                painter.drawRect(x, y, box_width, box_height)
+                painter.setPen(QPen(QColor("#1f1b2d")))
+                for line_index, line in enumerate(wrapped_lines):
+                    painter.drawText(
+                        x + 8,
+                        y + 6 + metrics.ascent() + line_index * line_height,
+                        line,
+                    )
+
+        def _paint_figure_overlays(self, painter: QPainter) -> None:
+            """Draw Studio's overlays as native vector strokes on top of the SVG."""
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            title = self.modifier_title.text().strip()
+            if title:
+                title_font = QFont("Segoe UI", max(11, round(self._figure_size / 75)))
+                title_font.setBold(True)
+                painter.setFont(title_font)
+                painter.setPen(QPen(QColor("#2e1065")))
+                painter.drawText(
+                    0, round(self._figure_size * 0.035), self._figure_size,
+                    round(self._figure_size * 0.06),
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, title,
+                )
+            points = self._path_points()
+            t_min, t_max = self.modifier_t_min.value(), self.modifier_t_max.value()
+            p_min, p_max = self.modifier_p_min.value(), self.modifier_p_max.value()
+            if points and t_min < t_max and p_min < p_max:
+                left, top = round(self._figure_size * 0.175), round(self._figure_size * 0.277)
+                width, height = round(self._figure_size * 0.725), round(self._figure_size * 0.514)
+                painter.save()
+                painter.setClipRect(left, top, width, height)
+                color = QColor(self.modifier_path_color.currentData())
+                painter.setPen(QPen(color, self.modifier_path_width.value()))
+                mapped = [
+                    (
+                        left + ((temperature - t_min) / (t_max - t_min)) * width,
+                        top + (1 - (pressure - p_min) / (p_max - p_min)) * height,
+                    )
+                    for temperature, pressure in points
+                ]
+                for start, end in zip(mapped, mapped[1:]):
+                    painter.drawLine(round(start[0]), round(start[1]), round(end[0]), round(end[1]))
+                painter.setBrush(color)
+                for x, y in mapped:
+                    painter.drawEllipse(round(x) - 4, round(y) - 4, 8, 8)
+                painter.restore()
+            self._draw_phase_regions(painter)
+            self._draw_text_annotations(painter)
+            painter.restore()
+
+        def _refresh_diagram_preview(self, *_args: object) -> None:
+            """Refresh quietly while the user edits a modifier control."""
+            if self._base_svg_path is None:
+                return
+            points = self._path_points()
+            if points and (
+                self.modifier_t_min.value() >= self.modifier_t_max.value()
+                or self.modifier_p_min.value() >= self.modifier_p_max.value()
+            ):
+                return
+            self._apply_diagram_modifications(show_figure=False, show_errors=False)
+
+        def _apply_diagram_modifications(
+            self, _checked: bool = False, *, show_figure: bool = True, show_errors: bool = True
+        ) -> None:
+            if self._base_svg_path is None:
+                if show_errors:
+                    QMessageBox.information(
+                        self, "No figure yet", "Run a calculation before modifying its figure."
+                    )
+                return
+            t_min, t_max = self.modifier_t_min.value(), self.modifier_t_max.value()
+            p_min, p_max = self.modifier_p_min.value(), self.modifier_p_max.value()
+            points = self._path_points()
+            if points and (t_min >= t_max or p_min >= p_max):
+                if show_errors:
+                    QMessageBox.warning(
+                        self, "Invalid diagram axes", "The overlay needs a valid increasing T and P range."
+                    )
+                return
+            self.figure.update()
+            if show_figure:
+                self._zoom_factor = 1.0
+            self._apply_zoom()
+            if show_figure:
+                self.result_tabs.setCurrentIndex(0)
+                self.statusBar().showMessage("Diagram edits are rendered as vector graphics in Studio.")
+
+        def _reset_diagram_modifier(self) -> None:
+            self.modifier_title.clear()
+            self.path_table.setRowCount(0)
+            self.modifier_path_color.setCurrentIndex(0)
+            self.modifier_path_width.setValue(2.0)
+            self._phase_regions.clear()
+            self.phase_regions_table.setRowCount(0)
+            self._text_annotations.clear()
+            self.text_boxes_table.setRowCount(0)
+            self._drawing_phase_region = False
+            self._placing_text_box = False
+            self._draft_region = []
+            self.figure.unsetCursor()
+            if self._base_svg_path is not None:
+                self._zoom_factor = 1.0
+                self._apply_zoom()
+                self.statusBar().showMessage("Diagram preview restored to the original figure.")
+
         def _choose_installation(self) -> None:
             directory = QFileDialog.getExistingDirectory(
                 self, "Select Perple_X installation folder", self.installation_edit.text()
@@ -1157,7 +2026,8 @@ def main() -> None:
 
         def _use_created_project(self, project_file: Path) -> None:
             self.project_edit.setText(str(project_file))
-            self.tabs.setCurrentIndex(1)
+            self._set_modifier_axes_from_project(project_file)
+            self.result_tabs.setCurrentIndex(0)
             self.statusBar().showMessage(
                 f"Created {project_file.name}. Run it when the BUILD selections are ready."
             )
@@ -1176,6 +2046,7 @@ def main() -> None:
             )
             if filename:
                 self.project_edit.setText(filename)
+                self._set_modifier_axes_from_project(filename)
 
         def _create_desktop_shortcut(self) -> None:
             try:
@@ -1196,14 +2067,6 @@ def main() -> None:
                 return
             try:
                 installation = PerpleXInstallation.discover(self.installation_edit.text())
-                configured_ghostscript = Path(
-                    self._settings.value("ghostscript_path", "", type=str)
-                )
-                ghostscript = configured_ghostscript if configured_ghostscript.is_file() else find_ghostscript()
-                if ghostscript is None:
-                    raise ValueError(
-                        "Ghostscript was not found. Install it to generate PNG figure previews."
-                    )
                 run_directory = (
                     Path(gettempdir())
                     / "PerpleXStudio"
@@ -1220,14 +2083,24 @@ def main() -> None:
             self._settings.setValue("installation_path", self.installation_edit.text())
             self._settings.setValue("project_path", self.project_edit.text())
             self._installation = installation
-            self._ghostscript = ghostscript
             self.log.clear()
             self.save_figure_button.setEnabled(False)
-            self._figure_pixmap = None
+            self._base_svg_path = None
+            self._vectorcraft_svg_path = None
+            self.open_vectorcraft_button.setEnabled(False)
+            self.reload_vectorcraft_button.setEnabled(False)
+            self._phase_regions.clear()
+            self.phase_regions_table.setRowCount(0)
+            self._text_annotations.clear()
+            self.text_boxes_table.setRowCount(0)
+            self._drawing_phase_region = False
+            self._placing_text_box = False
+            self._draft_region = []
             self._zoom_factor = 1.0
             for button in (self.zoom_out_button, self.zoom_in_button, self.reset_zoom_button):
                 button.setEnabled(False)
             self.figure.clear()
+            self.figure.set_reaction_equations([])
             self.figure.setText("Calculation is running…")
             self._append_log(f"Run directory: {self._staged_project.working_directory}\n")
             self.run_button.setEnabled(False)
@@ -1250,6 +2123,7 @@ def main() -> None:
             if self._staged_project is None or self._installation is None:
                 return
             self._stage = stage
+            self._stage_output = ""
             self._stage_had_perplex_error = False
             program: Path
             arguments: list[str] = []
@@ -1267,21 +2141,8 @@ def main() -> None:
                 program = self._installation.executables["pssect.exe"]
                 input_text = f"{self._staged_project.project_name}\nn\n"
             else:
-                if self._ghostscript is None:
-                    self._finish_with_error("Ghostscript was not configured.")
-                    return
-                program = self._ghostscript
-                output = self._staged_project.working_directory / f"{self._staged_project.project_name}.png"
-                postscript = self._staged_project.working_directory / f"{self._staged_project.project_name}.ps"
-                arguments = [
-                    "-dSAFER",
-                    "-dBATCH",
-                    "-dNOPAUSE",
-                    "-sDEVICE=pngalpha",
-                    "-r180",
-                    f"-sOutputFile={output}",
-                    str(postscript),
-                ]
+                self._finish_with_error(f"Unknown calculation stage: {stage}")
+                return
 
             self._append_log(f"\n--- {stage} ---\n")
             self.statusBar().showMessage(f"{stage} is running…")
@@ -1304,6 +2165,7 @@ def main() -> None:
         def _read_stdout(self) -> None:
             if self._process is not None:
                 output = bytes(self._process.readAllStandardOutput()).decode(errors="replace")
+                self._stage_output += output
                 if "**error" in output.casefold():
                     self._stage_had_perplex_error = True
                 self._append_log(output)
@@ -1311,6 +2173,7 @@ def main() -> None:
         def _read_stderr(self) -> None:
             if self._process is not None:
                 output = bytes(self._process.readAllStandardError()).decode(errors="replace")
+                self._stage_output += output
                 if "**error" in output.casefold():
                     self._stage_had_perplex_error = True
                 self._append_log(output)
@@ -1325,27 +2188,39 @@ def main() -> None:
                 self._finish_with_error(f"{stage} finished with exit code {exit_code}.")
                 return
             if stage == "CONVEX":
+                reaction_output = self._stage_output
+                if project is not None:
+                    print_file = project.working_directory / f"{project.project_name}.prn"
+                    if print_file.is_file():
+                        reaction_output += "\n" + print_file.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                self.figure.set_reaction_equations(self._parse_console_reactions(reaction_output))
                 self._start_stage("PSVDRAW")
             elif stage == "VERTEX":
                 self._start_stage("PSSECT")
-            elif stage == "PSVDRAW":
-                self._start_stage("Ghostscript")
-            elif stage == "PSSECT":
-                self._start_stage("Ghostscript")
             else:
-                result = project.working_directory / f"{project.project_name}.png"
-                pixmap = QPixmap(str(result))
-                if pixmap.isNull():
-                    self._finish_with_error(f"Ghostscript did not create a readable PNG: {result}")
+                postscript = project.working_directory / f"{project.project_name}.ps"
+                svg = project.working_directory / f"{project.project_name}.svg"
+                try:
+                    convert_postscript_to_svg(postscript, svg)
+                except ValueError as error:
+                    self._finish_with_error(str(error))
                     return
-                self._figure_pixmap = pixmap
+                if not self.figure.set_svg_file(svg):
+                    self._finish_with_error(f"Studio could not load vector figure: {svg}")
+                    return
+                self._base_svg_path = svg
+                self.open_vectorcraft_button.setEnabled(True)
+                self._set_modifier_axes_from_project(project.project_file)
                 self._zoom_factor = 1.0
                 self._apply_zoom()
-                message = f"Finished. Preview: {result}"
+                message = f"Finished. Native vector preview: {svg}"
                 self._append_log(f"\n{message}\n")
                 self.statusBar().showMessage(message)
                 self.run_button.setEnabled(True)
                 self.save_figure_button.setEnabled(True)
+                self.open_vectorcraft_button.setEnabled(True)
                 for button in (self.zoom_out_button, self.zoom_in_button, self.reset_zoom_button):
                     button.setEnabled(True)
 
@@ -1369,14 +2244,13 @@ def main() -> None:
             filename, selected_filter = QFileDialog.getSaveFileName(
                 self,
                 "Save Perple_X figure",
-                str(Path.home() / f"{project_name}.png"),
-                "PNG image (*.png);;PostScript figure (*.ps)",
+                str(Path.home() / f"{project_name}.svg"),
+                "SVG vector figure (*.svg);;PNG image (*.png);;PostScript figure (*.ps)",
             )
             if not filename:
                 return
 
-            source = self._staged_project.working_directory / f"{project_name}.png"
-            suffix = ".png"
+            suffix = ".svg" if selected_filter.startswith("SVG") else ".png"
             if selected_filter.startswith("PostScript"):
                 source = self._staged_project.working_directory / f"{project_name}.ps"
                 suffix = ".ps"
@@ -1384,37 +2258,166 @@ def main() -> None:
             if not destination.suffix:
                 destination = destination.with_suffix(suffix)
             try:
-                copy2(source, destination)
+                if selected_filter.startswith("PostScript"):
+                    copy2(source, destination)
+                elif selected_filter.startswith("SVG"):
+                    self._write_vector_svg(destination)
+                elif self._base_svg_path is not None:
+                    output = QPixmap(self._figure_size, self.figure.natural_height)
+                    output.fill(QColor("white"))
+                    painter = QPainter(output)
+                    self.figure.render_vector(
+                        painter, QRectF(0, 0, self._figure_size, self.figure.natural_height)
+                    )
+                    painter.end()
+                    if not output.save(str(destination), "PNG"):
+                        raise OSError("Qt could not write the PNG image.")
+                else:
+                    raise OSError("No figure preview is available to export.")
             except OSError as error:
                 QMessageBox.warning(self, "Could not save figure", str(error))
                 return
             self.statusBar().showMessage(f"Figure saved: {destination}")
             self._append_log(f"Figure saved: {destination}\n")
 
+        def _write_vector_svg(self, destination: Path) -> None:
+            generator = QSvgGenerator()
+            generator.setFileName(str(destination))
+            generator.setSize(QSize(self._figure_size, self.figure.natural_height))
+            generator.setViewBox(QRectF(0, 0, self._figure_size, self.figure.natural_height))
+            painter = QPainter(generator)
+            self.figure.render_vector(
+                painter, QRectF(0, 0, self._figure_size, self.figure.natural_height)
+            )
+            painter.end()
+
+        def _vectorcraft_executable(self) -> Path | None:
+            configured = Path(self._settings.value("vectorcraft_executable", "", type=str))
+            if configured.is_file():
+                return configured
+            located = which("vectorcraft.exe") or which("vectorcraft")
+            if located:
+                return Path(located)
+            candidates = [
+                Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "VectorCraft" / "vectorcraft.exe",
+                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "VectorCraft" / "vectorcraft.exe",
+            ]
+            return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+        def _open_in_vectorcraft(self) -> None:
+            if self._staged_project is None or self._base_svg_path is None:
+                QMessageBox.information(self, "No diagram yet", "Run a Perple_X calculation first.")
+                return
+            executable = self._vectorcraft_executable()
+            if executable is None:
+                QMessageBox.information(
+                    self,
+                    "VectorCraft is optional",
+                    "Install VectorCraft, then select its executable in Settings.\n\n"
+                    "The SVG editor is optional; Perple_X calculations and Studio's vector preview work without it.",
+                )
+                return
+            project_name = self._staged_project.project_name
+            project_folder = Path(self.project_edit.text()).expanduser().resolve().parent
+            default_path = project_folder / f"{project_name}_figure.svg"
+            filename, _ = QFileDialog.getSaveFileName(
+                self, "Save editable vector figure", str(default_path), "SVG vector figure (*.svg)"
+            )
+            if not filename:
+                return
+            destination = Path(filename)
+            if not destination.suffix:
+                destination = destination.with_suffix(".svg")
+            try:
+                self._write_vector_svg(destination)
+                if not self.figure.set_svg_file(destination):
+                    raise OSError("Studio could not reload the exported SVG.")
+                self._base_svg_path = destination
+                self._vectorcraft_svg_path = destination
+                self._clear_baked_overlays()
+                subprocess.Popen(
+                    [str(executable), str(destination)],
+                    cwd=str(destination.parent),
+                    close_fds=True,
+                )
+            except (OSError, ValueError) as error:
+                QMessageBox.warning(self, "Could not open VectorCraft", str(error))
+                return
+            self.reload_vectorcraft_button.setEnabled(True)
+            self.statusBar().showMessage(f"Opened editable SVG in VectorCraft: {destination}")
+
+        def _clear_baked_overlays(self) -> None:
+            """Promote exported overlays into the SVG baseline to avoid drawing them twice."""
+            self.modifier_title.clear()
+            self.path_table.setRowCount(0)
+            self._phase_regions.clear()
+            self.phase_regions_table.setRowCount(0)
+            self._text_annotations.clear()
+            self.text_boxes_table.setRowCount(0)
+            self._draft_region = []
+            self._drawing_phase_region = False
+            self._placing_text_box = False
+
+        def _reload_vectorcraft_svg(self) -> None:
+            path = self._vectorcraft_svg_path
+            if path is None or not path.is_file():
+                QMessageBox.warning(self, "SVG not found", "The VectorCraft SVG file is no longer available.")
+                return
+            if not self.figure.set_svg_file(path):
+                QMessageBox.warning(self, "Could not reload SVG", f"Studio could not read:\n{path}")
+                return
+            self._base_svg_path = path
+            self._zoom_factor = 1.0
+            self._apply_zoom()
+            self.statusBar().showMessage(f"Reloaded VectorCraft edits: {path}")
+
         def _change_zoom(self, multiplier: float) -> None:
-            if self._figure_pixmap is None:
+            if self._base_svg_path is None:
                 return
             self._zoom_factor = max(0.2, min(5.0, self._zoom_factor * multiplier))
             self._apply_zoom()
 
         def _reset_zoom(self) -> None:
-            if self._figure_pixmap is None:
+            if self._base_svg_path is None:
                 return
             self._zoom_factor = 1.0
             self._apply_zoom()
 
         def _apply_zoom(self) -> None:
-            if self._figure_pixmap is None:
+            if self._base_svg_path is None:
                 return
-            scaled = self._figure_pixmap.scaled(
-                round(self._figure_pixmap.width() * self._zoom_factor),
-                round(self._figure_pixmap.height() * self._zoom_factor),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self.figure.setPixmap(scaled)
-            self.figure.resize(scaled.size())
+            size = round(self._figure_size * self._zoom_factor)
+            self.figure.resize(size, round(self.figure.natural_height * self._zoom_factor))
+            self.figure.update()
             self.statusBar().showMessage(f"Figure zoom: {self._zoom_factor:.0%}")
+
+        @staticmethod
+        def _parse_console_reactions(output: str) -> list[tuple[int, str]]:
+            """Read numbered reaction equations reported directly by CONVEX."""
+            reactions: dict[int, str] = {}
+            console_pattern = re.compile(
+                r"finished\s+with\s+equilibrium\s*\(\s*(\d+)\s*\)\s*(.+?)\s*$",
+                re.IGNORECASE,
+            )
+            print_pattern = re.compile(r"^\s*\(\s*(\d+)\s*-\s*\d+\s*\)\s*(.+?)\s*$")
+            in_print_reaction_list = False
+            for line in output.splitlines():
+                lowered = line.casefold()
+                if "univariant equilibria are summarized below" in lowered:
+                    in_print_reaction_list = True
+                    continue
+                if "invariant points are summarized below" in lowered:
+                    in_print_reaction_list = False
+                    continue
+                match = console_pattern.search(line.strip())
+                if match is None and in_print_reaction_list:
+                    match = print_pattern.search(line)
+                if not match:
+                    continue
+                equation = " ".join(match.group(2).split())
+                if equation:
+                    reactions.setdefault(int(match.group(1)), equation)
+            return sorted(reactions.items())
 
         def _append_log(self, text: str) -> None:
             self.log.appendPlainText(text.rstrip("\n"))
